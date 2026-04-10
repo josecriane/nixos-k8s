@@ -1,0 +1,16 @@
+# Decrypted secret material (encrypted .age files ARE tracked)
+secrets/*.key
+secrets/*.pem
+
+# Server SSH private keys
+secrets/server-keys/*/ssh_host_ed25519_key
+
+# Nix build artifacts
+result
+result-*
+
+# Editor
+.direnv/
+.envrc
+*.swp
+*~
