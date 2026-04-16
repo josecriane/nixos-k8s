@@ -28,7 +28,12 @@
         config.allowUnfree = true;
       };
 
-      mkCluster = { clusterConfig, hostsPath, secretsPath }:
+      mkCluster =
+        {
+          clusterConfig,
+          hostsPath,
+          secretsPath,
+        }:
         let
           nodes = clusterConfig.nodes;
           bootstrapName = builtins.head (
@@ -36,7 +41,8 @@
           );
           bootstrapNode = nodes.${bootstrapName};
 
-          mkHost = nodeName:
+          mkHost =
+            nodeName:
             let
               nodeCfg = nodes.${nodeName};
               nodeConfig = nodeCfg // {
@@ -48,7 +54,12 @@
             nixpkgs.lib.nixosSystem {
               inherit system;
               specialArgs = {
-                inherit inputs secretsPath nodeConfig clusterNodes;
+                inherit
+                  inputs
+                  secretsPath
+                  nodeConfig
+                  clusterNodes
+                  ;
                 serverConfig = clusterConfig;
               };
               modules = [
@@ -77,9 +88,9 @@
             secretsPath = "${self}/secrets";
           }
         else
-          {};
+          { };
 
-      formatter.${system} = pkgs.nixfmt-rfc-style;
+      formatter.${system} = pkgs.nixfmt;
 
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [

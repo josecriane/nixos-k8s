@@ -16,8 +16,7 @@ let
   k8sCfg = serverConfig.kubernetes or { };
   engine = k8sCfg.engine or "k3s";
   kubeconfigPath =
-    if engine == "k3s" then "/etc/rancher/k3s/k3s.yaml"
-    else "/etc/kubernetes/cluster-admin.kubeconfig";
+    if engine == "k3s" then "/etc/rancher/k3s/k3s.yaml" else "/etc/kubernetes/cluster-admin.kubeconfig";
 in
 rec {
   # ============================================
@@ -96,13 +95,15 @@ rec {
       markerFile = "/var/lib/${name}-setup-done";
       serviceName = "${name}-setup";
       targetName = "k3s-${tier}";
-      prevTier = {
-        infrastructure = null;
-        storage = "infrastructure";
-        core = "storage";
-        apps = "core";
-        extras = "apps";
-      }.${tier} or null;
+      prevTier =
+        {
+          infrastructure = null;
+          storage = "infrastructure";
+          core = "storage";
+          apps = "core";
+          extras = "apps";
+        }
+        .${tier} or null;
       prevTargetName = if prevTier != null then "k3s-${prevTier}" else null;
 
       valuesJson = builtins.toJSON values;
@@ -110,7 +111,12 @@ rec {
 
       # Config hash: changes when chart, version, values, sets, or ingress change
       configHashInput = builtins.toJSON {
-        inherit chart version values sets;
+        inherit
+          chart
+          version
+          values
+          sets
+          ;
         ingress' = if ingress != null then ingress else null;
         extra = builtins.hashString "sha256" extraScript;
       };
@@ -118,11 +124,7 @@ rec {
 
       versionFlag = if version != null then "--version ${version}" else "";
 
-      repoScript =
-        if repo != null then
-          ''helm_repo_add "${repo.name}" "${repo.url}"''
-        else
-          "";
+      repoScript = if repo != null then ''helm_repo_add "${repo.name}" "${repo.url}"'' else "";
 
       setsFlags = builtins.concatStringsSep " " (map (s: "--set ${s}") sets);
 
@@ -138,20 +140,14 @@ rec {
         else
           "";
 
-      valuesFlagArg =
-        if values != { } || valuesFile != null then "-f \"$VALUES_FILE\""
-        else "";
+      valuesFlagArg = if values != { } || valuesFile != null then "-f \"$VALUES_FILE\"" else "";
 
-      cleanupValues =
-        if values != { } then ''rm -f "$VALUES_FILE"''
-        else "";
+      cleanupValues = if values != { } then ''rm -f "$VALUES_FILE"'' else "";
 
       ingressScript =
         if ingress != null then
           let
-            mwArgs = builtins.concatStringsSep " " (
-              map (mw: "\"${mw.name}:${mw.namespace}\"") middlewares
-            );
+            mwArgs = builtins.concatStringsSep " " (map (mw: "\"${mw.name}:${mw.namespace}\"") middlewares);
           in
           ''
             wait_for_certificate
@@ -166,17 +162,14 @@ rec {
           "";
 
       waitScript =
-        if waitFor != null then
-          ''wait_for_deployment "${namespace}" "${waitFor}" 300''
-        else
-          "";
+        if waitFor != null then ''wait_for_deployment "${namespace}" "${waitFor}" 300'' else "";
 
     in
     {
       systemd.services.${serviceName} = {
         description = "Setup ${name} via Helm";
-        after = if prevTargetName != null then [ "${prevTargetName}.target" ] else [];
-        requires = if prevTargetName != null then [ "${prevTargetName}.target" ] else [];
+        after = if prevTargetName != null then [ "${prevTargetName}.target" ] else [ ];
+        requires = if prevTargetName != null then [ "${prevTargetName}.target" ] else [ ];
         wantedBy = [ "${targetName}.target" ];
         before = [ "${targetName}.target" ];
 
@@ -228,10 +221,12 @@ rec {
             print_success "${name}" \
               "Chart: ${chart}${if version != null then " (${version})" else ""}" \
               "Namespace: ${namespace}"${
-                if ingress != null then ''
-              \
-              "URL: https://$(hostname ${ingress.host})"''
-                else ""
+                if ingress != null then
+                  ''
+                    \
+                    "URL: https://$(hostname ${ingress.host})"''
+                else
+                  ""
               }
 
             create_marker "${markerFile}" "${configHash}"

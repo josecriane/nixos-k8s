@@ -10,7 +10,14 @@
 # secrets/github-pat.age:
 #   A GitHub Personal Access Token with repo + admin:org scopes.
 #   echo "ghp_xxxx" | agenix -e secrets/github-pat.age
-{ config, lib, pkgs, serverConfig, secretsPath, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  serverConfig,
+  secretsPath,
+  ...
+}:
 
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };
@@ -55,38 +62,94 @@ let
               image = "ghcr.io/actions/actions-runner:latest";
               command = [ "/home/runner/run.sh" ];
               env = [
-                { name = "DOCKER_HOST"; value = "unix:///var/run/docker.sock"; }
-                { name = "DOCKER_API_VERSION"; value = "1.43"; }
-                { name = "RUNNER_WAIT_FOR_DOCKER_IN_SECONDS"; value = "120"; }
+                {
+                  name = "DOCKER_HOST";
+                  value = "unix:///var/run/docker.sock";
+                }
+                {
+                  name = "DOCKER_API_VERSION";
+                  value = "1.43";
+                }
+                {
+                  name = "RUNNER_WAIT_FOR_DOCKER_IN_SECONDS";
+                  value = "120";
+                }
               ];
               resources = {
-                requests = { cpu = "500m"; memory = "1Gi"; };
-                limits = { cpu = "2"; memory = "6Gi"; };
+                requests = {
+                  cpu = "500m";
+                  memory = "1Gi";
+                };
+                limits = {
+                  cpu = "2";
+                  memory = "6Gi";
+                };
               };
               volumeMounts = [
-                { name = "work"; mountPath = "/home/runner/_work"; }
-                { name = "dind-sock"; mountPath = "/var/run"; }
-                { name = "docker-conf-rw"; mountPath = "/home/runner/.docker"; }
+                {
+                  name = "work";
+                  mountPath = "/home/runner/_work";
+                }
+                {
+                  name = "dind-sock";
+                  mountPath = "/var/run";
+                }
+                {
+                  name = "docker-conf-rw";
+                  mountPath = "/home/runner/.docker";
+                }
               ];
             }
             {
               name = "dind";
               image = "docker:24-dind";
-              args = [ "dockerd" "--host=unix:///var/run/docker.sock" "--group=$(DOCKER_GROUP_GID)" ];
-              env = [
-                { name = "DOCKER_GROUP_GID"; value = "123"; }
+              args = [
+                "dockerd"
+                "--host=unix:///var/run/docker.sock"
+                "--group=$(DOCKER_GROUP_GID)"
               ];
-              securityContext = { privileged = true; };
+              env = [
+                {
+                  name = "DOCKER_GROUP_GID";
+                  value = "123";
+                }
+              ];
+              securityContext = {
+                privileged = true;
+              };
               resources = {
-                requests = { cpu = "250m"; memory = "512Mi"; };
-                limits = { cpu = "1"; memory = "2Gi"; };
+                requests = {
+                  cpu = "250m";
+                  memory = "512Mi";
+                };
+                limits = {
+                  cpu = "1";
+                  memory = "2Gi";
+                };
               };
               volumeMounts = [
-                { name = "work"; mountPath = "/home/runner/_work"; }
-                { name = "dind-sock"; mountPath = "/var/run"; }
-                { name = "dind-externals"; mountPath = "/home/runner/externals"; }
-                { name = "daemon-json"; mountPath = "/etc/docker/daemon.json"; readOnly = true; subPath = "daemon.json"; }
-                { name = "dind-docker-conf"; mountPath = "/root/.docker"; }
+                {
+                  name = "work";
+                  mountPath = "/home/runner/_work";
+                }
+                {
+                  name = "dind-sock";
+                  mountPath = "/var/run";
+                }
+                {
+                  name = "dind-externals";
+                  mountPath = "/home/runner/externals";
+                }
+                {
+                  name = "daemon-json";
+                  mountPath = "/etc/docker/daemon.json";
+                  readOnly = true;
+                  subPath = "daemon.json";
+                }
+                {
+                  name = "dind-docker-conf";
+                  mountPath = "/root/.docker";
+                }
               ];
             }
           ];
@@ -94,42 +157,102 @@ let
             {
               name = "init-dind-externals";
               image = "ghcr.io/actions/actions-runner:latest";
-              command = [ "cp" "-r" "/home/runner/externals/." "/home/runner/tmpDir/" ];
+              command = [
+                "cp"
+                "-r"
+                "/home/runner/externals/."
+                "/home/runner/tmpDir/"
+              ];
               volumeMounts = [
-                { name = "dind-externals"; mountPath = "/home/runner/tmpDir"; }
+                {
+                  name = "dind-externals";
+                  mountPath = "/home/runner/tmpDir";
+                }
               ];
             }
             {
               name = "copy-docker-config";
               image = "busybox:1.34.1";
-              command = [ "sh" "-c" ''
-                set -x
-                mkdir -p /home/runner/.docker
-                cp /docker-conf-ro/config.json /home/runner/.docker/config.json
-                chmod 644 /home/runner/.docker/config.json
-                mkdir -p /dind-docker-conf
-                cp /docker-conf-ro/config.json /dind-docker-conf/config.json
-                chmod 644 /dind-docker-conf/config.json
-              '' ];
+              command = [
+                "sh"
+                "-c"
+                ''
+                  set -x
+                  mkdir -p /home/runner/.docker
+                  cp /docker-conf-ro/config.json /home/runner/.docker/config.json
+                  chmod 644 /home/runner/.docker/config.json
+                  mkdir -p /dind-docker-conf
+                  cp /docker-conf-ro/config.json /dind-docker-conf/config.json
+                  chmod 644 /dind-docker-conf/config.json
+                ''
+              ];
               volumeMounts = [
-                { name = "docker-conf-rw"; mountPath = "/home/runner/.docker"; }
-                { name = "dind-docker-conf"; mountPath = "/dind-docker-conf"; }
-                { name = "mirror-registry"; mountPath = "/docker-conf-ro/config.json"; subPath = ".dockerconfigjson"; }
+                {
+                  name = "docker-conf-rw";
+                  mountPath = "/home/runner/.docker";
+                }
+                {
+                  name = "dind-docker-conf";
+                  mountPath = "/dind-docker-conf";
+                }
+                {
+                  name = "mirror-registry";
+                  mountPath = "/docker-conf-ro/config.json";
+                  subPath = ".dockerconfigjson";
+                }
               ];
             }
           ];
           hostAliases = lib.optionals mirrorEnabled [
-            { ip = "127.0.0.1"; hostnames = [ "index.docker.io" "registry-1.docker.io" "docker.io" ]; }
-            { ip = traefikIP; hostnames = [ mirrorHost registryHost ]; }
+            {
+              ip = "127.0.0.1";
+              hostnames = [
+                "index.docker.io"
+                "registry-1.docker.io"
+                "docker.io"
+              ];
+            }
+            {
+              ip = traefikIP;
+              hostnames = [
+                mirrorHost
+                registryHost
+              ];
+            }
           ];
           volumes = [
-            { name = "work"; emptyDir = {}; }
-            { name = "dind-sock"; emptyDir = {}; }
-            { name = "dind-externals"; emptyDir = {}; }
-            { name = "docker-conf-rw"; emptyDir = {}; }
-            { name = "dind-docker-conf"; emptyDir = {}; }
-            { name = "mirror-registry"; secret = { secretName = "mirror-registry-secret"; }; }
-            { name = "daemon-json"; configMap = { name = "docker-daemon-config"; }; }
+            {
+              name = "work";
+              emptyDir = { };
+            }
+            {
+              name = "dind-sock";
+              emptyDir = { };
+            }
+            {
+              name = "dind-externals";
+              emptyDir = { };
+            }
+            {
+              name = "docker-conf-rw";
+              emptyDir = { };
+            }
+            {
+              name = "dind-docker-conf";
+              emptyDir = { };
+            }
+            {
+              name = "mirror-registry";
+              secret = {
+                secretName = "mirror-registry-secret";
+              };
+            }
+            {
+              name = "daemon-json";
+              configMap = {
+                name = "docker-daemon-config";
+              };
+            }
           ];
         };
       };
@@ -159,8 +282,9 @@ let
               "bridge": {
                 "com.docker.network.driver.mtu": "1450"
               }
-            }${lib.optionalString mirrorEnabled '',
-            "registry-mirrors": ["https://${mirrorHost}"]''}
+            }${lib.optionalString mirrorEnabled ''
+              ,
+                          "registry-mirrors": ["https://${mirrorHost}"]''}
           }
       DAEMONEOF
 

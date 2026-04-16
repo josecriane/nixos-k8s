@@ -8,7 +8,13 @@
 #   UI:       https://registry-ui.<subdomain>.<domain>
 #
 # Push example: docker push registry.<subdomain>.<domain>/myimage:latest
-{ config, lib, pkgs, serverConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  serverConfig,
+  ...
+}:
 
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };

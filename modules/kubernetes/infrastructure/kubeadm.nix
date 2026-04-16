@@ -27,8 +27,13 @@ in
   # Kubernetes cluster via NixOS module
   services.kubernetes = {
     roles =
-      if isServer then [ "master" "node" ]
-      else [ "node" ];
+      if isServer then
+        [
+          "master"
+          "node"
+        ]
+      else
+        [ "node" ];
 
     masterAddress = nodeConfig.bootstrapIP;
     apiserverAddress = "https://${nodeConfig.bootstrapIP}:6443";
@@ -94,17 +99,18 @@ in
   };
 
   # Firewall
-  networking.firewall.allowedTCPPorts =
-    [ 10250 ] # kubelet
-    ++ lib.optionals isServer [
-      6443 # API server
-      10259 # scheduler
-      10257 # controller-manager
-    ]
-    ++ lib.optionals (isServer && isHA) [
-      2379 # etcd client
-      2380 # etcd peer
-    ];
+  networking.firewall.allowedTCPPorts = [
+    10250
+  ] # kubelet
+  ++ lib.optionals isServer [
+    6443 # API server
+    10259 # scheduler
+    10257 # controller-manager
+  ]
+  ++ lib.optionals (isServer && isHA) [
+    2379 # etcd client
+    2380 # etcd peer
+  ];
 
   networking.firewall.allowedUDPPorts = [
     8472 # VXLAN (Flannel)

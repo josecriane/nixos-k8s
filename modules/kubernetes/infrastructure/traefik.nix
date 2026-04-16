@@ -12,7 +12,8 @@ let
   isAcme = (serverConfig.certificates.provider or "manual") == "acme";
   additionalArgs = [
     "--providers.kubernetescrd.allowCrossNamespace=true"
-  ] ++ lib.optionals isAcme [
+  ]
+  ++ lib.optionals isAcme [
     "--certificatesresolvers.default.acme.email=${serverConfig.acmeEmail}"
     "--certificatesresolvers.default.acme.storage=/data/acme.json"
     "--certificatesresolvers.default.acme.tlschallenge=true"

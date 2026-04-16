@@ -6,7 +6,13 @@
 # URL: https://kubernetes-dashboard.<subdomain>.<domain>
 # Login: uses a long-lived admin token created automatically during setup.
 #   To retrieve it: kubectl get secret dashboard-admin-token -n kubernetes-dashboard -o jsonpath="{.data.token}" | base64 -d
-{ config, lib, pkgs, serverConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  serverConfig,
+  ...
+}:
 
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };

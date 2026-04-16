@@ -1,4 +1,9 @@
-{ config, lib, nodeConfig, ... }:
+{
+  config,
+  lib,
+  nodeConfig,
+  ...
+}:
 
 let
   encryption = nodeConfig.encryption or { };

@@ -16,8 +16,14 @@ in
 {
   systemd.services.flannel-setup = {
     description = "Setup Flannel CNI";
-    after = [ "kube-apiserver.service" "k3s.service" ];
-    wants = [ "kube-apiserver.service" "k3s.service" ];
+    after = [
+      "kube-apiserver.service"
+      "k3s.service"
+    ];
+    wants = [
+      "kube-apiserver.service"
+      "k3s.service"
+    ];
     wantedBy = [ "k3s-infrastructure.target" ];
     before = [ "k3s-infrastructure.target" ];
 

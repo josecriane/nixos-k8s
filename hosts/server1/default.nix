@@ -20,9 +20,7 @@
   networking.hostName = nodeConfig.name;
 
   # Static /etc/hosts for all cluster nodes
-  networking.extraHosts = builtins.concatStringsSep "\n" (
-    map (n: "${n.ip} ${n.name}") clusterNodes
-  );
+  networking.extraHosts = builtins.concatStringsSep "\n" (map (n: "${n.ip} ${n.name}") clusterNodes);
 
   # Local DNS cache
   services.dnsmasq = {

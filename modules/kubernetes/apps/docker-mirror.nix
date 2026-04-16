@@ -9,7 +9,13 @@
 # In containerd config (/etc/containerd/config.toml):
 #   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
 #     endpoint = ["https://mirror.<subdomain>.<domain>"]
-{ config, lib, pkgs, serverConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  serverConfig,
+  ...
+}:
 
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };

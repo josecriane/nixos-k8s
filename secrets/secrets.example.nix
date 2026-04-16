@@ -15,7 +15,10 @@ in
   "k3s-token.age".publicKeys = allKeys;
 
   # Cloudflare API token (only servers that run cert-manager)
-  "cloudflare-api-token.age".publicKeys = [ admin server1 ];
+  "cloudflare-api-token.age".publicKeys = [
+    admin
+    server1
+  ];
 
   # GitHub PAT (only bootstrap server, only if github-runners enabled)
   # "github-pat.age".publicKeys = [ admin server1 ];

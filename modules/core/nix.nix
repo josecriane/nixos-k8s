@@ -15,7 +15,10 @@
     auto-optimise-store = true;
 
     # Trusted users
-    trusted-users = [ "root" "@wheel" ];
+    trusted-users = [
+      "root"
+      "@wheel"
+    ];
     allowed-users = [
       "root"
       "@wheel"
