@@ -182,18 +182,6 @@ wait_for_certificate() {
   fi
 }
 
-copy_cert_to_namespace() {
-  local ns="$1"
-  if $KUBECTL get secret "$CERT_SECRET" -n "$ns" &>/dev/null; then
-    echo "Certificate already exists in namespace $ns"
-    return 0
-  fi
-  echo "Copying certificate to namespace $ns..."
-  $KUBECTL get secret "$CERT_SECRET" -n traefik-system -o yaml | \
-    sed "s/namespace: traefik-system/namespace: $ns/" | \
-    $KUBECTL apply -n "$ns" -f -
-}
-
 wait_for_resource() {
   local resource="$1"
   local namespace="$2"
@@ -239,26 +227,12 @@ wait_for_deployment() {
 
 ensure_namespace() {
   local ns="$1"
+  local pss_level="${2:-baseline}"
   $KUBECTL create namespace "$ns" --dry-run=client -o yaml | $KUBECTL apply -f -
-}
-
-copy_cert_to_namespace() {
-  local ns="$1"
-  if ! $KUBECTL get secret "$CERT_SECRET" -n "$ns" &>/dev/null; then
-    echo "Copying certificate to namespace $ns..."
-    $KUBECTL get secret "$CERT_SECRET" -n traefik-system -o json | \
-      $JQ 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.annotations."kubectl.kubernetes.io/last-applied-configuration")' | \
-      $JQ ".metadata.namespace = \"$ns\"" | \
-      $KUBECTL apply -f -
-  else
-    echo "Certificate already exists in $ns"
-  fi
-}
-
-setup_namespace() {
-  local ns="$1"
-  ensure_namespace "$ns"
-  copy_cert_to_namespace "$ns"
+  $KUBECTL label --overwrite namespace "$ns" \
+    "pod-security.kubernetes.io/enforce=$pss_level" \
+    "pod-security.kubernetes.io/warn=$pss_level" \
+    "pod-security.kubernetes.io/audit=$pss_level"
 }
 
 # ============================================
@@ -273,18 +247,20 @@ create_ingress_route() {
   local port="$5"
   shift 5
 
-  local middleware_section=""
-  if [ $# -gt 0 ]; then
-    middleware_section="      middlewares:"
-    for mw_spec in "$@"; do
-      local mw_name="${mw_spec%%:*}"
-      local mw_ns="${mw_spec##*:}"
-      middleware_section="$middleware_section
+  # Always attach the HSTS headers middleware (lives in traefik-system, see traefik.nix)
+  local middleware_section="      middlewares:
+        - name: hsts-headers
+          namespace: traefik-system"
+  for mw_spec in "$@"; do
+    local mw_name="${mw_spec%%:*}"
+    local mw_ns="${mw_spec##*:}"
+    middleware_section="$middleware_section
         - name: $mw_name
           namespace: $mw_ns"
-    done
-  fi
+  done
 
+  # TLS is handled by the default TLSStore in traefik-system (see tls-secret.nix).
+  # IngressRoutes don't reference a per-namespace secret, avoiding wildcard key duplication.
   cat <<EOF | $KUBECTL apply --server-side --force-conflicts -f -
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -302,7 +278,9 @@ $middleware_section
         - name: $svc
           port: $port
   tls:
-    secretName: $CERT_SECRET
+    store:
+      name: default
+      namespace: traefik-system
 EOF
 }
 
@@ -314,18 +292,19 @@ create_ingress_route_api_bypass() {
   local port="$5"
   shift 5
 
-  local middleware_section=""
-  if [ $# -gt 0 ]; then
-    middleware_section="      middlewares:"
-    for mw_spec in "$@"; do
-      local mw_name="${mw_spec%%:*}"
-      local mw_ns="${mw_spec##*:}"
-      middleware_section="$middleware_section
+  # Always attach the HSTS headers middleware
+  local middleware_section="      middlewares:
+        - name: hsts-headers
+          namespace: traefik-system"
+  for mw_spec in "$@"; do
+    local mw_name="${mw_spec%%:*}"
+    local mw_ns="${mw_spec##*:}"
+    middleware_section="$middleware_section
         - name: $mw_name
           namespace: $mw_ns"
-    done
-  fi
+  done
 
+  # TLS via default TLSStore (see tls-secret.nix)
   cat <<EOF | $KUBECTL apply --server-side --force-conflicts -f -
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -348,7 +327,9 @@ $middleware_section
         - name: $svc
           port: $port
   tls:
-    secretName: $CERT_SECRET
+    store:
+      name: default
+      namespace: traefik-system
 EOF
 }
 

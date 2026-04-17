@@ -12,6 +12,13 @@
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/local-path-provisioner-setup-done";
+
+  # Pinned version + SHA256 verified at build time by Nix
+  lppVersion = "v0.0.30";
+  lppManifest = pkgs.fetchurl {
+    url = "https://raw.githubusercontent.com/rancher/local-path-provisioner/${lppVersion}/deploy/local-path-storage.yaml";
+    sha256 = "fe682186b00400fe7e2b72bae16f63e47a56a6dcc677938c6642139ef670045e";
+  };
 in
 {
   systemd.services.local-path-provisioner-setup = {
@@ -40,9 +47,12 @@ in
         setup_preamble "${markerFile}" "Local Path Provisioner"
         wait_for_k3s
 
-        echo "Installing Local Path Provisioner..."
+        echo "Installing Local Path Provisioner (${lppVersion})..."
 
-        $KUBECTL apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
+        $KUBECTL apply -f ${lppManifest}
+
+        # Uses hostPath volumes; baseline PSS blocks them.
+        ensure_namespace local-path-storage privileged
 
         echo "Waiting for Local Path Provisioner to be ready..."
         wait_for_pod local-path-storage "app=local-path-provisioner"

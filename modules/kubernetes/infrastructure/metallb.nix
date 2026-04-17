@@ -49,7 +49,8 @@ in
         helm_repo_add metallb https://metallb.github.io/metallb
 
         # Create memberlist secret for speaker pods (required since MetalLB v0.14+)
-        ensure_namespace metallb-system
+        # MetalLB speaker needs NET_RAW for ARP/NDP; baseline PSS blocks it.
+        ensure_namespace metallb-system privileged
         $KUBECTL create secret generic -n metallb-system metallb-memberlist \
           --from-literal=secretkey="$(generate_password 64)" \
           --dry-run=client -o yaml | $KUBECTL apply -f -

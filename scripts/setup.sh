@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="${PROJECT_DIR:-$(dirname "$SCRIPT_DIR")}"
 
 echo "========================================="
 echo "  NixOS K8s - Setup Wizard"
@@ -136,7 +136,7 @@ fi
 echo ""
 echo "--- TLS certificates ---"
 echo ""
-echo "  1) manual - Provide your own certificate (place in certs/tls.crt and certs/tls.key)"
+echo "  1) manual - Provide your own certificate (encrypt via secrets/tls-cert.age and tls-key.age)"
 echo "  2) acme   - Automatic via cert-manager + Cloudflare DNS-01"
 echo ""
 read -p "Certificate provider [manual]: " CERT_PROVIDER_INPUT
@@ -251,10 +251,6 @@ echo ""
 echo "--- Services (all optional, can be changed later in config.nix) ---"
 echo ""
 
-SVC_ARGOCD="false"
-read -p "Enable ArgoCD (GitOps)? (y/N): " SVC_INPUT
-[ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_ARGOCD="true"
-
 SVC_REGISTRY="false"
 read -p "Enable Docker Registry? (y/N): " SVC_INPUT
 [ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_REGISTRY="true"
@@ -263,13 +259,13 @@ SVC_MIRROR="false"
 read -p "Enable Docker Mirror (pull-through cache)? (y/N): " SVC_INPUT
 [ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_MIRROR="true"
 
-SVC_DASHBOARD="false"
-read -p "Enable Kubernetes Dashboard? (y/N): " SVC_INPUT
-[ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_DASHBOARD="true"
-
 SVC_RUNNERS="false"
 GITHUB_CONFIG_URL=""
 GITHUB_MAX_RUNNERS="5"
+GITHUB_RUNNER_NAME="self-hosted-linux"
+GITHUB_AUTH_METHOD="app"
+GITHUB_APP_ID=""
+GITHUB_INSTALLATION_ID=""
 read -p "Enable GitHub Actions self-hosted runners? (y/N): " SVC_INPUT
 if [ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ]; then
   SVC_RUNNERS="true"
@@ -278,9 +274,36 @@ if [ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ]; then
     echo "  ERROR: GitHub config URL is required for runners"
     exit 1
   fi
+  read -p "  Runner name [self-hosted-linux]: " GITHUB_RUNNER_NAME
+  GITHUB_RUNNER_NAME="${GITHUB_RUNNER_NAME:-self-hosted-linux}"
   read -p "  Max runners [5]: " GITHUB_MAX_RUNNERS
   GITHUB_MAX_RUNNERS="${GITHUB_MAX_RUNNERS:-5}"
-  echo "  NOTE: You will need to create secrets/github-pat.age with your PAT"
+  echo ""
+  echo "  Authentication:"
+  echo "    1) GitHub App (recommended - minimal scopes, rotating tokens)"
+  echo "    2) PAT         (simpler - fine-grained or classic personal token)"
+  read -p "  Auth method [app]: " AUTH_INPUT
+  AUTH_INPUT="${AUTH_INPUT:-app}"
+  case "$AUTH_INPUT" in
+    1|app)
+      GITHUB_AUTH_METHOD="app"
+      read -p "  App ID: " GITHUB_APP_ID
+      read -p "  Installation ID: " GITHUB_INSTALLATION_ID
+      if [ -z "$GITHUB_APP_ID" ] || [ -z "$GITHUB_INSTALLATION_ID" ]; then
+        echo "  ERROR: Both App ID and Installation ID are required"
+        exit 1
+      fi
+      echo "  NOTE: You will need to create secrets/github-app-key.age with the App private key (.pem)"
+      ;;
+    2|pat)
+      GITHUB_AUTH_METHOD="pat"
+      echo "  NOTE: You will need to create secrets/github-pat.age with your PAT"
+      ;;
+    *)
+      echo "  ERROR: Invalid choice. Use 'app' or 'pat'."
+      exit 1
+      ;;
+  esac
 fi
 
 # ============================================
@@ -443,19 +466,32 @@ $SSH_KEY_LINE
   };
 
   services = {
-    argocd = $SVC_ARGOCD;
     docker-registry = $SVC_REGISTRY;
     docker-mirror = $SVC_MIRROR;
-    kubernetes-dashboard = $SVC_DASHBOARD;
     github-runners = $SVC_RUNNERS;
   };
 $(if [ "$SVC_RUNNERS" = "true" ]; then
+if [ "$GITHUB_AUTH_METHOD" = "app" ]; then
 cat << GHEOF
   github-runners = {
     configUrl = "$GITHUB_CONFIG_URL";
     maxRunners = $GITHUB_MAX_RUNNERS;
+    runnerName = "$GITHUB_RUNNER_NAME";
+    githubApp = {
+      appId = $GITHUB_APP_ID;
+      installationId = $GITHUB_INSTALLATION_ID;
+    };
   };
 GHEOF
+else
+cat << GHEOF
+  github-runners = {
+    configUrl = "$GITHUB_CONFIG_URL";
+    maxRunners = $GITHUB_MAX_RUNNERS;
+    runnerName = "$GITHUB_RUNNER_NAME";
+  };
+GHEOF
+fi
 fi)
   $NAS_CONFIG
   storage = { useNFS = $USE_NFS; };
@@ -492,10 +528,8 @@ if [ "$USE_NFS" = "true" ]; then
 fi
 echo ""
 ENABLED_SVCS=""
-[ "$SVC_ARGOCD" = "true" ] && ENABLED_SVCS="$ENABLED_SVCS ArgoCD"
 [ "$SVC_REGISTRY" = "true" ] && ENABLED_SVCS="$ENABLED_SVCS Registry"
 [ "$SVC_MIRROR" = "true" ] && ENABLED_SVCS="$ENABLED_SVCS Mirror"
-[ "$SVC_DASHBOARD" = "true" ] && ENABLED_SVCS="$ENABLED_SVCS Dashboard"
 [ "$SVC_RUNNERS" = "true" ] && ENABLED_SVCS="$ENABLED_SVCS Runners"
 if [ -n "$ENABLED_SVCS" ]; then
   echo "  Services:   $ENABLED_SVCS"
@@ -517,18 +551,30 @@ echo "Next steps:"
 echo "  1. Add your agenix secrets:"
 echo "     cd secrets"
 echo "     openssl rand -hex 32 | agenix -e k3s-token.age"
+echo "     # Admin user password hash (required):"
+echo "     nix-shell -p mkpasswd --run 'mkpasswd -m sha-512' | tr -d '\\n' > /tmp/pass-hash"
+echo "     agenix -e admin-password-hash.age < /tmp/pass-hash && rm /tmp/pass-hash"
+if [ "$CERT_PROVIDER" = "manual" ]; then
+  echo "     agenix -e tls-cert.age < /path/to/wildcard.crt"
+  echo "     agenix -e tls-key.age  < /path/to/wildcard.key"
+fi
 if [ "$CERT_PROVIDER" = "acme" ]; then
   echo "     agenix -e cloudflare-api-token.age"
 fi
+if [ "$SVC_REGISTRY" = "true" ]; then
+  echo "     # Generate htpasswd and encrypt (push credentials for the registry):"
+  echo "     nix-shell -p apacheHttpd --run 'htpasswd -Bc /tmp/htpasswd ci'"
+  echo "     agenix -e registry-htpasswd.age < /tmp/htpasswd && rm /tmp/htpasswd"
+fi
 if [ "$SVC_RUNNERS" = "true" ]; then
-  echo "     echo \"ghp_xxxx\" | agenix -e github-pat.age"
+  if [ "$GITHUB_AUTH_METHOD" = "app" ]; then
+    echo "     agenix -e github-app-key.age < /path/to/app-private-key.pem"
+  else
+    echo "     echo \"ghp_xxxx\" | agenix -e github-pat.age"
+  fi
 fi
 echo "  2. Edit hosts/$NODE_NAME/hardware-configuration.nix for your hardware"
 echo "  3. Run 'make install NODE=$NODE_NAME'"
-if [ "$CERT_PROVIDER" = "manual" ]; then
-  echo "  4. Place your certificate in certs/tls.crt and certs/tls.key"
-  echo "  5. Run 'make upload-cert'"
-fi
 if [ "$ENCRYPT_ENABLE" = "true" ] && [ "$UNLOCK_METHOD" = "tpm" ]; then
   echo ""
   echo "  After first boot, enroll TPM key:"

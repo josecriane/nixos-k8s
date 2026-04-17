@@ -12,6 +12,10 @@ let
   isAcme = (serverConfig.certificates.provider or "manual") == "acme";
   additionalArgs = [
     "--providers.kubernetescrd.allowCrossNamespace=true"
+    # HTTP (web, :80) permanent redirect to HTTPS (websecure, :443)
+    "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+    "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+    "--entrypoints.web.http.redirections.entryPoint.permanent=true"
   ]
   ++ lib.optionals isAcme [
     "--certificatesresolvers.default.acme.email=${serverConfig.acmeEmail}"
@@ -95,6 +99,23 @@ in
 
         echo "Waiting for Traefik pod to be ready..."
         wait_for_pod traefik-system "app.kubernetes.io/name=traefik"
+
+        # HSTS middleware: tells browsers to only use HTTPS for 1 year.
+        # Attached to IngressRoutes via lib.sh create_ingress_route.
+        echo "Creating HSTS middleware..."
+        cat <<'HSTSEOF' | $KUBECTL apply -f -
+        apiVersion: traefik.io/v1alpha1
+        kind: Middleware
+        metadata:
+          name: hsts-headers
+          namespace: traefik-system
+        spec:
+          headers:
+            stsSeconds: 31536000
+            stsIncludeSubdomains: true
+            stsPreload: true
+            forceSTSHeader: true
+        HSTSEOF
 
         echo "Waiting for Traefik to get LoadBalancer IP..."
         for i in $(seq 1 30); do

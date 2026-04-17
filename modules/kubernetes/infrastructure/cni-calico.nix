@@ -64,6 +64,15 @@ in
               nodeSelector: all()
         EOF
 
+        # Calico needs privileged (hostNetwork, NET_ADMIN, hostPath).
+        for ns in tigera-operator calico-system calico-apiserver; do
+          $KUBECTL create namespace "$ns" --dry-run=client -o yaml | $KUBECTL apply -f -
+          $KUBECTL label --overwrite namespace "$ns" \
+            pod-security.kubernetes.io/enforce=privileged \
+            pod-security.kubernetes.io/warn=privileged \
+            pod-security.kubernetes.io/audit=privileged
+        done
+
         # Wait for calico-system pods
         echo "Waiting for Calico pods..."
         for i in $(seq 1 60); do

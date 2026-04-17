@@ -30,19 +30,22 @@
   };
 
   services = {
-    argocd = false;
     docker-registry = false;
     docker-mirror = false;
-    kubernetes-dashboard = false;
     github-runners = false;
   };
 
   # GitHub Actions runners config (only if github-runners = true)
-  # Requires secrets/github-pat.age (PAT with repo + workflow scopes)
+  # Auth via GitHub App (recommended): requires secrets/github-app-key.age (private key .pem)
+  # Alternative: set a fine-grained PAT via secrets/github-pat.age (omit githubApp block)
   # github-runners = {
   #   configUrl = "https://github.com/your-org";
   #   maxRunners = 5;
   #   runnerName = "self-hosted-linux";
+  #   githubApp = {
+  #     appId = 1234567;
+  #     installationId = 87654321;
+  #   };
   # };
 
   # NAS integration

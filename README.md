@@ -202,22 +202,21 @@ Add them to `secrets/secrets.nix`:
 "tls-key.age".publicKeys = [ admin server1 ];
 ```
 
-The certificate is uploaded to the cluster as a K8s TLS secret during boot.
+The certificate is uploaded to the cluster as a K8s TLS secret in the `traefik-system` namespace and a default `TLSStore` is created pointing to it. IngressRoutes don't reference per-namespace copies of the secret, so the private key lives in a single namespace only (less blast radius if an app namespace is compromised).
+
+All HTTPS responses include an `HSTS` header (`max-age=31536000; includeSubDomains; preload`) and HTTP is redirected to HTTPS with a permanent 308.
 
 **Renewing a manual certificate:**
 
-When the certificate expires, replace it with the new one:
+Re-encrypt the `.age` files and redeploy. The service compares a hash of the encrypted cert against the marker file, so changes are applied automatically without `make reinstall`:
 
 ```bash
 cd secrets
-
-# Re-encrypt with the new certificate files
 agenix -e tls-cert.age < /path/to/new-wildcard.crt
 agenix -e tls-key.age < /path/to/new-wildcard.key
-
-# Clear the marker and redeploy so the new cert is uploaded
-make reinstall SVC=tls-secret
 ```
+
+Then a regular `make deploy NODE=<name>` picks it up.
 
 **ACME** (`provider = "acme"`): automatic via cert-manager + Cloudflare DNS-01. Requires the `cloudflare-api-token.age` secret. cert-manager handles issuance and renewal automatically.
 
@@ -273,6 +272,7 @@ Required secrets:
 | Secret | Purpose | Who needs it |
 |--------|---------|-------------|
 | `k3s-token.age` | Cluster join token | All nodes |
+| `admin-password-hash.age` | sha-512 hash of the admin user password (used for sudo) | All nodes |
 
 Certificate secrets (one or the other):
 
@@ -286,14 +286,26 @@ Service-specific secrets:
 
 | Secret | Purpose | When needed |
 |--------|---------|-------------|
-| `github-pat.age` | GitHub PAT (repo + admin:org scopes) | `services.github-runners = true` |
+| `registry-htpasswd.age` | htpasswd for Docker registry push auth | `services.docker-registry = true` |
+| `github-app-key.age` | GitHub App private key (.pem) | `services.github-runners = true` + `githubApp` block |
+| `github-pat.age` | GitHub PAT (fallback if no App configured) | `services.github-runners = true` without `githubApp` |
 
 Optional:
 
 | Secret | Purpose |
 |--------|---------|
 | `wifi-password.age` | WiFi PSK (if `useWifi = true`) |
-| `admin-password-hash.age` | Sudo password |
+
+### Generating the admin password hash
+
+```bash
+# mkpasswd appends a trailing newline that breaks PAM auth; strip it.
+nix-shell -p mkpasswd --run 'mkpasswd -m sha-512' | tr -d '\n' > /tmp/pass-hash
+agenix -e secrets/admin-password-hash.age < /tmp/pass-hash
+rm /tmp/pass-hash
+```
+
+The admin user's sudo requires this password for any command outside the explicit NOPASSWD list (the Makefile-driven flow runs commands that are allowed without a password). `make deploy` prompts once for the password per deploy.
 
 ## Project structure
 
@@ -333,10 +345,8 @@ nixos-k8s/
         nfs-storage.nix              PV/PVC creation (bootstrap)
         cleanup.nix                  Cleanup disabled services (bootstrap)
       apps/
-        argocd.nix                   ArgoCD GitOps
         docker-registry.nix          Docker Registry + UI
         docker-mirror.nix            Docker Hub pull-through cache
-        kubernetes-dashboard.nix     Kubernetes Dashboard
         github-runners.nix           GitHub Actions self-hosted runners (DinD)
   scripts/
     setup.sh                         Interactive config wizard
@@ -388,13 +398,42 @@ All services are optional, toggled in `config.nix`. They deploy as Helm charts a
 
 | Service | Toggle | URL | Notes |
 |---------|--------|-----|-------|
-| ArgoCD | `services.argocd = true` | `argocd.<sub>.<domain>` | GitOps CD. Admin password in K8s secret `argocd-initial-admin-secret`. |
-| Docker Registry | `services.docker-registry = true` | `registry.<sub>.<domain>` | Private container registry + web UI at `registry-ui.<sub>.<domain>`. |
-| Docker Mirror | `services.docker-mirror = true` | `mirror.<sub>.<domain>` | Pull-through cache for Docker Hub. Avoids rate limits. |
-| K8s Dashboard | `services.kubernetes-dashboard = true` | `kubernetes-dashboard.<sub>.<domain>` | Admin token auto-created in secret `dashboard-admin-token`. |
-| GitHub Runners | `services.github-runners = true` | - | Self-hosted ARC runners with Docker-in-Docker. |
+| Docker Registry | `services.docker-registry = true` | `registry.<sub>.<domain>` | Private registry. Anonymous pulls, authenticated push (BasicAuth via `registry-htpasswd.age`). Web UI at `registry-ui.<sub>.<domain>` (auth required). |
+| Docker Mirror | `services.docker-mirror = true` | cluster-internal | Pull-through cache for Docker Hub. Reachable only from cluster pods at `docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000`. |
+| GitHub Runners | `services.github-runners = true` | - | Self-hosted ARC runners with Docker-in-Docker. Egress restricted via NetworkPolicy (see security notes below). |
+
+### Docker Registry config
+
+Anonymous pulls, BasicAuth for push (and for the UI). Credentials live in `secrets/registry-htpasswd.age`.
+
+Generate the htpasswd file and encrypt it:
+
+```bash
+nix-shell -p apacheHttpd --run 'htpasswd -Bc /tmp/htpasswd ci'
+agenix -e secrets/registry-htpasswd.age < /tmp/htpasswd
+rm /tmp/htpasswd
+```
+
+Add more users with `htpasswd -B /tmp/htpasswd <user>` (without `-c`) before encrypting.
+
+From the CI:
+
+```bash
+docker login registry.<sub>.<domain> -u ci
+docker push registry.<sub>.<domain>/myimage:tag
+```
+
+Rotate credentials: regenerate the htpasswd, re-encrypt, then `make reinstall SVC=docker-registry`.
 
 ### GitHub Actions runners config
+
+**Recommended: GitHub App auth** (minimal scopes, short-lived tokens)
+
+1. Create a GitHub App in your org (`https://github.com/organizations/<org>/settings/apps/new`) with permissions:
+   - **Repository**: `Actions: Read`, `Metadata: Read`
+   - **Organization**: `Self-hosted runners: Read and write`
+2. Generate a private key (`.pem`), note the App ID, install the app on your org and note the Installation ID.
+3. Configure:
 
 ```nix
 services.github-runners = true;
@@ -402,16 +441,45 @@ github-runners = {
   configUrl = "https://github.com/your-org";
   maxRunners = 5;
   runnerName = "self-hosted-linux";
+  githubApp = {
+    appId = 1234567;
+    installationId = 87654321;
+  };
 };
 ```
 
-Requires a GitHub PAT with `repo` + `admin:org` scopes, stored in agenix:
+4. Encrypt the App private key:
+
+```bash
+agenix -e secrets/github-app-key.age < /path/to/app-private-key.pem
+```
+
+**Fallback: fine-grained PAT** (omit the `githubApp` block)
 
 ```bash
 echo "ghp_xxxx" | agenix -e secrets/github-pat.age
 ```
 
-Runners include Docker-in-Docker support. When `docker-mirror` is enabled, DinD is configured to use the mirror automatically.
+Use a fine-grained PAT scoped to `Self-hosted runners: Read and write` on the target org/repo. Avoid classic PATs with broad scopes.
+
+Runners include Docker-in-Docker support. When `docker-mirror` is enabled, DinD is configured to use the mirror automatically via cluster-internal DNS (no external exposure).
+
+### Security considerations for runners
+
+DinD runs as a **privileged** container, which is equivalent to giving the workflow root on the host node. The module mitigates this by applying a `NetworkPolicy` that restricts egress from the runner namespace:
+
+| Allowed | Blocked |
+|---------|---------|
+| DNS (kube-system CoreDNS) | kube-apiserver |
+| Docker mirror (cluster-internal) | kubelet on nodes |
+| Traefik (for registry push) | Other namespaces (cert-manager, calico-system, ...) |
+| Internet (public IPs only) | LAN and all RFC1918 private networks |
+
+Remaining risk: a workflow that manages to escape DinD still has root on the node where the runner pod is scheduled. To minimize impact:
+
+- **Use dedicated worker nodes for runners**: in multi-node clusters, taint the control-plane nodes so runner pods can only schedule on workers. A node compromise then only affects a worker, not the cluster control plane.
+- **Limit who can trigger runs**: use branch protection rules, restrict `pull_request_target`, and avoid running untrusted PRs from external contributors.
+- **Prefer rootless builders for image builds**: replace `docker build` with kaniko or buildah in workflow steps where possible. DinD is only strictly needed when workflows use `docker run`.
 
 ## Adding a service
 
@@ -567,6 +635,39 @@ nodes = {
   };
 };
 ```
+
+## Security posture
+
+The defaults aim for a reasonable security/ergonomics balance for a homelab / small team cluster. Highlights:
+
+**User and sudo**
+- Admin user is fully declarative (`users.mutableUsers = false`) with a password hash from `admin-password-hash.age`. Manual `passwd`/`usermod` changes are reset on every activation.
+- `sudo` requires a password for interactive use. Only specific commands used by the Makefile are `NOPASSWD`: `systemctl status/start/stop/restart *-setup.service`, `journalctl`, `kubectl`, and `rm -f /var/lib/*-setup-done`.
+- `make deploy` prompts once for the sudo password (passed to the remote via `--ask-sudo-password`).
+- Root login disabled (`root.hashedPassword = "!"`).
+
+**Kubernetes API access**
+- The cluster-admin kubeconfig is NOT copied to the admin's home directory. Use `sudo kubectl` (kubectl is in the NOPASSWD list; `KUBECONFIG` is preserved via `env_keep`).
+
+**Network**
+- Kubelet's port 10250 is NOT open to all interfaces. It's restricted via nftables rules to cluster node IPs + pod/service CIDRs.
+- SSH hardened (no passwords, no root, modern KEX/ciphers, fail2ban).
+- Kernel sysctl hardening (rp_filter, no source routing, no redirects, etc.).
+
+**TLS**
+- Wildcard TLS secret lives in a single namespace (`traefik-system`). The default `TLSStore` makes it available to all IngressRoutes without copying the private key into every app namespace.
+- HTTPS enforced: HTTP is redirected to HTTPS permanently (308) and `Strict-Transport-Security` is set on all HTTPS responses (1 year, includeSubDomains, preload).
+- Certificate rotation is automatic: re-encrypt `tls-cert.age`/`tls-key.age` with agenix, deploy, and the upload service re-runs because a content-hash marker detects the change.
+
+**Supply chain**
+- External manifests (Flannel, local-path-provisioner) are fetched via `pkgs.fetchurl` with SHA-256 pinning, so the hash is verified at build time. Helm charts are pinned to exact versions.
+- Docker registry accepts anonymous pulls but requires BasicAuth (htpasswd via agenix) for push and UI access.
+- Docker mirror is cluster-internal only (no external ingress).
+- GitHub runners authenticate to GitHub via a GitHub App (short-lived tokens) by default; a fine-grained PAT is accepted as fallback.
+- Runner pods have a restrictive `NetworkPolicy` that blocks the Kubernetes API, kubelet, other namespaces, and the LAN. Outbound allowed only to DNS, the docker mirror/registry, and public internet.
+
+**Agenix secret ordering**
+- The NixOS users activation waits for agenix (`system.activationScripts.users.deps = [ "agenixInstall" ]`), so `hashedPasswordFile` sees the decrypted file at activation time instead of locking the account.
 
 ## DNS setup
 

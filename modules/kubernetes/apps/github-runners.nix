@@ -5,11 +5,17 @@
 #   github-runners = {
 #     configUrl = "https://github.com/your-org";
 #     maxRunners = 5;
+#     runnerName = "self-hosted-linux";
+#     # GitHub App auth (recommended - minimal scopes, short-lived tokens)
+#     githubApp = {
+#       appId = 1234567;
+#       installationId = 87654321;
+#     };
 #   };
 #
-# secrets/github-pat.age:
-#   A GitHub Personal Access Token with repo + admin:org scopes.
-#   echo "ghp_xxxx" | agenix -e secrets/github-pat.age
+# Authentication:
+#   - With githubApp block: needs secrets/github-app-key.age (private key .pem)
+#   - Without githubApp block: falls back to PAT via secrets/github-pat.age
 {
   config,
   lib,
@@ -26,8 +32,13 @@ let
   maxRunners = ghConfig.maxRunners or 5;
   runnerName = ghConfig.runnerName or "self-hosted-linux";
 
+  # GitHub App auth is preferred. Fall back to PAT only if githubApp not configured.
+  githubApp = ghConfig.githubApp or null;
+  useGithubApp = githubApp != null;
+
   mirrorEnabled = (serverConfig.services or { }).docker-mirror or false;
-  mirrorHost = "mirror.${serverConfig.subdomain}.${serverConfig.domain}";
+  # Internal cluster DNS for the mirror (no external ingress)
+  mirrorInternalHost = "docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000";
   registryHost = "registry.${serverConfig.subdomain}.${serverConfig.domain}";
   traefikIP = serverConfig.traefikIP;
 
@@ -45,6 +56,8 @@ let
     chart = "oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set";
     version = "0.13.1";
     tier = "extras";
+    # Runners need privileged DinD (docker:24-dind sidecar).
+    pssLevel = "privileged";
     values = {
       inherit githubConfigUrl maxRunners;
       githubConfigSecret = "github-secret";
@@ -214,10 +227,7 @@ let
             }
             {
               ip = traefikIP;
-              hostnames = [
-                mirrorHost
-                registryHost
-              ];
+              hostnames = [ registryHost ];
             }
           ];
           volumes = [
@@ -258,13 +268,27 @@ let
       };
     };
     extraScript = ''
-      # Create GitHub PAT secret from agenix (trim newline from token)
-      echo "Creating GitHub PAT secret..."
-      TOKEN=$(tr -d '\n' < "${config.age.secrets.github-pat.path}")
-      $KUBECTL create secret generic github-secret \
-        --namespace arc-runners \
-        --from-literal=github_token="$TOKEN" \
-        --dry-run=client -o yaml | $KUBECTL apply -f -
+      # Create GitHub auth secret (App or PAT)
+      echo "Creating GitHub auth secret..."
+      ${
+        if useGithubApp then
+          ''
+            $KUBECTL create secret generic github-secret \
+              --namespace arc-runners \
+              --from-literal=github_app_id="${toString githubApp.appId}" \
+              --from-literal=github_app_installation_id="${toString githubApp.installationId}" \
+              --from-file=github_app_private_key="${config.age.secrets.github-app-key.path}" \
+              --dry-run=client -o yaml | $KUBECTL apply -f -
+          ''
+        else
+          ''
+            TOKEN=$(tr -d '\n' < "${config.age.secrets.github-pat.path}")
+            $KUBECTL create secret generic github-secret \
+              --namespace arc-runners \
+              --from-literal=github_token="$TOKEN" \
+              --dry-run=client -o yaml | $KUBECTL apply -f -
+          ''
+      }
 
       # Create daemon.json ConfigMap for DinD (registry mirror + MTU)
       echo "Creating Docker daemon config..."
@@ -284,27 +308,87 @@ let
               }
             }${lib.optionalString mirrorEnabled ''
               ,
-                          "registry-mirrors": ["https://${mirrorHost}"]''}
+                          "registry-mirrors": ["http://${mirrorInternalHost}"],
+                          "insecure-registries": ["${mirrorInternalHost}"]''}
           }
       DAEMONEOF
 
-      # Create mirror registry secret (docker auth config)
+      # Create mirror registry secret (docker auth config for registry login on the node)
       if ! $KUBECTL get secret mirror-registry-secret -n arc-runners &>/dev/null; then
-        echo "Creating mirror registry secret..."
+        echo "Creating registry secret..."
         $KUBECTL create secret docker-registry mirror-registry-secret \
           --namespace arc-runners \
-          --docker-server="${mirrorHost}" \
+          --docker-server="${registryHost}" \
           --docker-username="unused" \
           --docker-password="unused" \
           --dry-run=client -o yaml | $KUBECTL apply -f -
       fi
+
+      # NetworkPolicy: restrict egress to DNS, mirror, traefik and internet only.
+      # Blocks access to kube-apiserver, kubelet, other namespaces, LAN (RFC1918).
+      # This reduces the blast radius of a compromised runner (DinD is privileged).
+      echo "Applying arc-runners NetworkPolicy..."
+      cat <<'NETPOLEOF' | $KUBECTL apply -f -
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: arc-runners-egress
+        namespace: arc-runners
+      spec:
+        podSelector: {}
+        policyTypes: [Egress]
+        egress:
+          # DNS via CoreDNS (no port filter: NixOS' CoreDNS listens on 10053,
+          # and Calico evaluates the policy post-DNAT so the service port 53
+          # would not match).
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+          # Docker mirror (internal only, HTTP)
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: container-mirror
+            ports:
+              - protocol: TCP
+                port: 5000
+          # Docker registry via Traefik (for docker login/push)
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: traefik-system
+            ports:
+              - protocol: TCP
+                port: 443
+              - protocol: TCP
+                port: 80
+          # Internet, but block all RFC1918/private ranges (no LAN, no k8s internal IPs)
+          - to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  except:
+                    - 10.0.0.0/8
+                    - 172.16.0.0/12
+                    - 192.168.0.0/16
+                    - 169.254.0.0/16
+      NETPOLEOF
     '';
   };
 in
 {
-  age.secrets.github-pat = {
-    file = "${secretsPath}/github-pat.age";
-  };
+  age.secrets = lib.mkMerge [
+    (lib.mkIf useGithubApp {
+      github-app-key = {
+        file = "${secretsPath}/github-app-key.age";
+      };
+    })
+    (lib.mkIf (!useGithubApp) {
+      github-pat = {
+        file = "${secretsPath}/github-pat.age";
+      };
+    })
+  ];
 
   systemd.services = controller.systemd.services // runnerSet.systemd.services;
 }

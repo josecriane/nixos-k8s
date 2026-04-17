@@ -82,16 +82,33 @@ in
   };
 
   # Firewall
-  networking.firewall.allowedTCPPorts =
-    # All nodes
-    [ 10250 ] # kubelet
-    ++ lib.optionals isServer [
-      6443 # K3s API server
-    ]
-    ++ lib.optionals (isServer && isHA) [
-      2379 # etcd client
-      2380 # etcd peer
-    ];
+  # API server (6443), kubelet (10250) and etcd (2379/2380) are NOT in
+  # allowedTCPPorts. They're restricted via extraCommands to cluster nodes +
+  # pod/service CIDRs only.
+  networking.firewall.allowedTCPPorts = [ ];
+
+  networking.firewall.extraCommands =
+    let
+      sources = lib.concatStringsSep "," (
+        (map (n: n.ip) clusterNodes)
+        ++ [
+          podCidr
+          serviceCidr
+        ]
+      );
+    in
+    ''
+      # Kubelet
+      iptables -A nixos-fw -s ${sources} -p tcp --dport 10250 -j nixos-fw-accept
+    ''
+    + lib.optionalString isServer ''
+      # K3s API server
+      iptables -A nixos-fw -s ${sources} -p tcp --dport 6443 -j nixos-fw-accept
+    ''
+    + lib.optionalString (isServer && isHA) ''
+      # etcd peer + client (HA only)
+      iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 2379,2380 -j nixos-fw-accept
+    '';
 
   networking.firewall.allowedUDPPorts = [
     8472 # Flannel VXLAN
@@ -195,32 +212,12 @@ in
     };
   };
 
-  # Service to copy kubeconfig after K3s starts (servers only)
-  systemd.services.kubeconfig-setup = lib.mkIf isServer {
-    description = "Setup kubeconfig for admin user";
-    after = [ "k3s.service" ];
-    wants = [ "k3s.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = pkgs.writeShellScript "setup-kubeconfig" ''
-        for i in $(seq 1 30); do
-          if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-            break
-          fi
-          sleep 1
-        done
-
-        if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-          mkdir -p /home/${serverConfig.adminUser}/.kube
-          cp /etc/rancher/k3s/k3s.yaml /home/${serverConfig.adminUser}/.kube/config
-          chown ${serverConfig.adminUser}:users /home/${serverConfig.adminUser}/.kube/config
-          chmod 600 /home/${serverConfig.adminUser}/.kube/config
-        fi
-      '';
-    };
-  };
+  # Set KUBECONFIG globally and let sudo preserve it so `sudo kubectl` works.
+  # The kubeconfig file is root-readable only; do NOT copy it to user home.
+  environment.variables.KUBECONFIG = lib.mkIf isServer kubeconfigPath;
+  security.sudo.extraConfig = lib.mkIf isServer ''
+    Defaults env_keep += "KUBECONFIG"
+  '';
 
   # WORKAROUND: Fix for K3s CNI bridge issue
   systemd.services.k3s-cni-bridge-fixer = {

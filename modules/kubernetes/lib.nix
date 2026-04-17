@@ -90,6 +90,9 @@ rec {
       middlewares ? [ ],
       waitFor ? null,
       extraScript ? "",
+      # Pod Security Standard level applied to the namespace via labels.
+      # Use "privileged" for workloads that need hostPath, capabilities, hostNetwork, etc.
+      pssLevel ? "baseline",
     }:
     let
       markerFile = "/var/lib/${name}-setup-done";
@@ -151,7 +154,6 @@ rec {
           in
           ''
             wait_for_certificate
-            copy_cert_to_namespace "${namespace}"
 
             create_ingress_route \
               "${name}" "${namespace}" \
@@ -211,6 +213,12 @@ rec {
               }
 
             ${cleanupValues}
+
+            # Pod Security Standards label on the namespace
+            $KUBECTL label --overwrite namespace "${namespace}" \
+              pod-security.kubernetes.io/enforce="${pssLevel}" \
+              pod-security.kubernetes.io/warn="${pssLevel}" \
+              pod-security.kubernetes.io/audit="${pssLevel}"
 
             ${waitScript}
 

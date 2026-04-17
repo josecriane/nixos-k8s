@@ -74,6 +74,10 @@ in
       enable = true;
     };
 
+    # Disable bundled flannel; CNI comes from cni-flannel.nix or cni-calico.nix.
+    # (Default is true and would create a stale /etc/cni/net.d/11-flannel.conf.)
+    flannel.enable = false;
+
     addons.dns = {
       enable = true;
       clusterDomain = "cluster.local";
@@ -82,7 +86,7 @@ in
           errors
           health :10054
           kubernetes cluster.local in-addr.arpa ip6.arpa {
-            pods insecure
+            pods verified
             fallthrough in-addr.arpa ip6.arpa
           }
           prometheus :10055
@@ -99,18 +103,34 @@ in
   };
 
   # Firewall
-  networking.firewall.allowedTCPPorts = [
-    10250
-  ] # kubelet
-  ++ lib.optionals isServer [
-    6443 # API server
-    10259 # scheduler
-    10257 # controller-manager
-  ]
-  ++ lib.optionals (isServer && isHA) [
-    2379 # etcd client
-    2380 # etcd peer
-  ];
+  # API server (6443), scheduler (10259), controller-manager (10257) and
+  # kubelet (10250) are NOT in allowedTCPPorts to avoid exposing them globally.
+  # They're restricted via extraCommands to cluster nodes + pod/service CIDRs.
+  # etcd (2379/2380) only matters for HA and is also restricted below.
+  networking.firewall.allowedTCPPorts = [ ];
+
+  networking.firewall.extraCommands =
+    let
+      sources = lib.concatStringsSep "," (
+        (map (n: n.ip) clusterNodes)
+        ++ [
+          podCidr
+          serviceCidr
+        ]
+      );
+    in
+    ''
+      # Kubelet
+      iptables -A nixos-fw -s ${sources} -p tcp --dport 10250 -j nixos-fw-accept
+    ''
+    + lib.optionalString isServer ''
+      # API server, scheduler, controller-manager
+      iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 6443,10259,10257 -j nixos-fw-accept
+    ''
+    + lib.optionalString (isServer && isHA) ''
+      # etcd peer + client (HA only)
+      iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 2379,2380 -j nixos-fw-accept
+    '';
 
   networking.firewall.allowedUDPPorts = [
     8472 # VXLAN (Flannel)
@@ -205,33 +225,10 @@ in
     };
   };
 
-  # Setup kubeconfig for admin user (servers only)
-  systemd.services.kubeconfig-setup = lib.mkIf isServer {
-    description = "Setup kubeconfig for admin user";
-    after = [ "kube-apiserver.service" ];
-    wants = [ "kube-apiserver.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = pkgs.writeShellScript "setup-kubeconfig" ''
-        # Wait for API server to generate kubeconfig
-        for i in $(seq 1 60); do
-          if [ -f "${kubeconfigPath}" ]; then
-            break
-          fi
-          sleep 2
-        done
-
-        if [ -f "${kubeconfigPath}" ]; then
-          mkdir -p /home/${serverConfig.adminUser}/.kube
-          cp "${kubeconfigPath}" /home/${serverConfig.adminUser}/.kube/config
-          chown ${serverConfig.adminUser}:users /home/${serverConfig.adminUser}/.kube/config
-          chmod 600 /home/${serverConfig.adminUser}/.kube/config
-        else
-          echo "WARNING: kubeconfig not found at ${kubeconfigPath}"
-        fi
-      '';
-    };
-  };
+  # Set KUBECONFIG globally and let sudo preserve it so `sudo kubectl` works.
+  # The kubeconfig file is root-readable only; do NOT copy it to user home.
+  environment.variables.KUBECONFIG = lib.mkIf isServer kubeconfigPath;
+  security.sudo.extraConfig = lib.mkIf isServer ''
+    Defaults env_keep += "KUBECONFIG"
+  '';
 }

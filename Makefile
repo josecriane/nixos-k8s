@@ -11,7 +11,7 @@ node-ip = $(shell $(NIX_EVAL) --expr '(import ./config.nix).nodes.$(1).ip')
 # Get the bootstrap node name
 bootstrap-node = $(shell $(NIX_EVAL) --expr 'let c = import ./config.nix; in builtins.head (builtins.filter (n: c.nodes.$${n}.bootstrap or false) (builtins.attrNames c.nodes))')
 
-.PHONY: help setup install deploy deploy-all bootstrap ssh status logs shell fmt check clean reinstall
+.PHONY: help setup install deploy deploy-all bootstrap ssh unlock status logs shell fmt check clean reinstall
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -30,9 +30,12 @@ install: config.nix ## Install a node: make install NODE=server1 [IP=x.x.x.x]
 deploy: config.nix ## Deploy to a node: make deploy NODE=server1
 	@[ -n "$(NODE)" ] || { echo "Usage: make deploy NODE=<name>"; exit 1; }
 	@NODE_IP=$(call node-ip,$(NODE)); \
+	IDENTITY=$$($(NIX_EVAL) --expr '(import ./config.nix).agenixIdentity or ""' | sed "s|~|$$HOME|"); \
+	SSHOPTS=""; \
+	[ -n "$$IDENTITY" ] && SSHOPTS="-o IdentityFile=$$IDENTITY -o IdentitiesOnly=yes"; \
 	echo "=== Deploying $(NODE) ($$NODE_IP) ==="; \
-	nixos-rebuild switch --flake $(FLAKE)#$(NODE) \
-		--target-host $(ADMIN)@$$NODE_IP --use-remote-sudo
+	NIX_SSHOPTS="$$SSHOPTS" nixos-rebuild switch --flake $(FLAKE)#$(NODE) \
+		--target-host $(ADMIN)@$$NODE_IP --sudo --ask-sudo-password
 
 deploy-all: config.nix ## Deploy to all nodes (servers first)
 	@for node in $$(nix eval --json --impure --expr 'builtins.attrNames (import ./config.nix).nodes' | jq -r '.[]'); do \
@@ -54,10 +57,14 @@ ssh: config.nix ## SSH into a node: make ssh NODE=server1
 	@[ -n "$(NODE)" ] || { echo "Usage: make ssh NODE=<name>"; exit 1; }
 	@ssh $(ADMIN)@$(call node-ip,$(NODE))
 
+unlock: config.nix ## SSH-unlock a node's LUKS disk via initrd: make unlock NODE=server1
+	@[ -n "$(NODE)" ] || { echo "Usage: make unlock NODE=<name>"; exit 1; }
+	@./scripts/unlock.sh $(NODE)
+
 status: config.nix ## Show cluster status
 	@BOOT=$(bootstrap-node); \
 	ssh $(ADMIN)@$$($(NIX_EVAL) --expr "(import ./config.nix).nodes.$$BOOT.ip") \
-		'kubectl get nodes -o wide && echo "" && kubectl get pods -A'
+		'sudo kubectl get nodes -o wide && echo "" && sudo kubectl get pods -A'
 
 logs: config.nix ## Show K3s logs: make logs NODE=server1
 	@[ -n "$(NODE)" ] || { echo "Usage: make logs NODE=<name>"; exit 1; }

@@ -12,6 +12,13 @@ let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/flannel-setup-done";
   podCidr = (serverConfig.kubernetes or { }).podCidr or "10.42.0.0/16";
+
+  # Pinned version + SHA256 verified at build time by Nix
+  flannelVersion = "v0.28.4";
+  flannelManifest = pkgs.fetchurl {
+    url = "https://github.com/flannel-io/flannel/releases/download/${flannelVersion}/kube-flannel.yml";
+    sha256 = "d078019743c5e0194ce965125fc80ef00af0c1661ec9e12396311f1cfec860a2";
+  };
 in
 {
   systemd.services.flannel-setup = {
@@ -39,9 +46,9 @@ in
         setup_preamble "${markerFile}" "Flannel CNI"
         wait_for_k3s
 
-        echo "Installing Flannel CNI..."
+        echo "Installing Flannel CNI (${flannelVersion})..."
 
-        $KUBECTL apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+        $KUBECTL apply -f ${flannelManifest}
 
         echo "Waiting for Flannel pods..."
         for i in $(seq 1 60); do

@@ -56,17 +56,11 @@ in
     ./infrastructure/cert-manager.nix
   ]
   # --- Application services (bootstrap only, toggled via config.nix) ---
-  ++ lib.optionals (isBootstrap && (enabled "argocd")) [
-    ./apps/argocd.nix
-  ]
   ++ lib.optionals (isBootstrap && (enabled "docker-registry")) [
     ./apps/docker-registry.nix
   ]
   ++ lib.optionals (isBootstrap && (enabled "docker-mirror")) [
     ./apps/docker-mirror.nix
-  ]
-  ++ lib.optionals (isBootstrap && (enabled "kubernetes-dashboard")) [
-    ./apps/kubernetes-dashboard.nix
   ]
   ++ lib.optionals (isBootstrap && (enabled "github-runners")) [
     ./apps/github-runners.nix

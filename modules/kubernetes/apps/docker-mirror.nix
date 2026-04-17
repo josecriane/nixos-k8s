@@ -3,12 +3,11 @@
 # config.nix:
 #   services.docker-mirror = true;
 #
-# URL: https://mirror.<subdomain>.<domain>
+# Internal-only service, no external ingress. Accessed by pods in the cluster
+# via: http://docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000
 #
-# Configure Docker/containerd to use this mirror to avoid Docker Hub rate limits.
-# In containerd config (/etc/containerd/config.toml):
-#   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-#     endpoint = ["https://mirror.<subdomain>.<domain>"]
+# This URL is used automatically by the DinD sidecar in GitHub runners
+# (see modules/kubernetes/apps/github-runners.nix).
 {
   config,
   lib,
@@ -39,10 +38,5 @@ k8s.createHelmRelease {
       enabled = true;
       size = "100Gi";
     };
-  };
-  ingress = {
-    host = "mirror";
-    service = "docker-registry";
-    port = 5000;
   };
 }

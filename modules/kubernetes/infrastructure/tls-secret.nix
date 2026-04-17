@@ -15,6 +15,19 @@ let
   markerFile = "/var/lib/tls-secret-setup-done";
   certSecret = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}-tls";
   isManual = (serverConfig.certificates.provider or "manual") == "manual";
+
+  # Hash of the encrypted cert+key. When agenix re-encrypts (cert rotation,
+  # re-keying), the ciphertext changes so the hash changes and the service
+  # re-runs. This propagates cert updates without a manual `make reinstall`.
+  # .age files are binary so we use hashFile (which doesn't read content as string).
+  certContentHash =
+    if isManual then
+      builtins.hashString "sha256" (
+        (builtins.hashFile "sha256" "${secretsPath}/tls-cert.age")
+        + (builtins.hashFile "sha256" "${secretsPath}/tls-key.age")
+      )
+    else
+      "";
 in
 lib.mkIf isManual {
   age.secrets.tls-cert = {
@@ -40,7 +53,7 @@ lib.mkIf isManual {
       ExecStart = pkgs.writeShellScript "tls-secret-setup" ''
         ${k8s.libShSource}
 
-        setup_preamble "${markerFile}" "TLS certificate"
+        setup_preamble_hash "${markerFile}" "TLS certificate" "${certContentHash}"
         wait_for_k3s
 
         echo "Uploading TLS certificate to cluster..."
@@ -53,11 +66,26 @@ lib.mkIf isManual {
 
         echo "Certificate uploaded to traefik-system/${certSecret}"
 
+        # Default TLSStore so IngressRoutes without explicit tls.secretName use
+        # the wildcard cert. Avoids copying the secret into every namespace.
+        echo "Creating default TLSStore..."
+        cat <<TLSSTOREEOF | $KUBECTL apply -f -
+        apiVersion: traefik.io/v1alpha1
+        kind: TLSStore
+        metadata:
+          name: default
+          namespace: traefik-system
+        spec:
+          defaultCertificate:
+            secretName: ${certSecret}
+        TLSSTOREEOF
+
         print_success "TLS certificate" \
           "Secret: ${certSecret}" \
-          "Namespace: traefik-system"
+          "Namespace: traefik-system" \
+          "Default TLSStore: traefik-system/default"
 
-        create_marker "${markerFile}"
+        create_marker "${markerFile}" "${certContentHash}"
       '';
     };
   };
