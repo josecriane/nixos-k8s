@@ -11,15 +11,69 @@ echo "========================================="
 echo ""
 
 CONFIG_FILE="$PROJECT_DIR/config.nix"
+EXISTING_CONFIG=""
 
 if [ -f "$CONFIG_FILE" ]; then
-  echo "config.nix already exists."
+  echo "config.nix already exists. Existing values will be pre-filled as defaults."
   read -p "Overwrite? (y/N): " OVERWRITE
   if [ "$OVERWRITE" != "y" ] && [ "$OVERWRITE" != "Y" ]; then
     echo "Setup cancelled."
     exit 0
   fi
+  EXISTING_CONFIG="$CONFIG_FILE"
+  echo ""
 fi
+
+# ============================================
+# Helpers to read defaults from existing config
+# ============================================
+cfg_get() {
+  # cfg_get <nix-path-starting-with-dot> <fallback>
+  # toString lets us read ints (e.g. appId) and strings uniformly.
+  local expr="$1" fallback="${2:-}"
+  if [ -n "$EXISTING_CONFIG" ]; then
+    local r
+    r=$(nix eval --raw --impure --expr "toString ((import $EXISTING_CONFIG)$expr or \"\")" 2>/dev/null || true)
+    if [ -n "$r" ]; then printf '%s' "$r"; return; fi
+  fi
+  printf '%s' "$fallback"
+}
+
+cfg_get_bool() {
+  local expr="$1" fallback="${2:-false}"
+  if [ -n "$EXISTING_CONFIG" ]; then
+    local r
+    r=$(nix eval --impure --expr "(import $EXISTING_CONFIG)$expr or $fallback" 2>/dev/null || echo "$fallback")
+    printf '%s' "$r"
+    return
+  fi
+  printf '%s' "$fallback"
+}
+
+cfg_get_list_csv() {
+  local expr="$1" fallback="${2:-}"
+  if [ -n "$EXISTING_CONFIG" ] && command -v jq >/dev/null 2>&1; then
+    local r
+    r=$(nix eval --json --impure --expr "(import $EXISTING_CONFIG)$expr or []" 2>/dev/null \
+        | jq -r 'if type == "array" then join(",") else "" end' 2>/dev/null || true)
+    if [ -n "$r" ]; then printf '%s' "$r"; return; fi
+  fi
+  printf '%s' "$fallback"
+}
+
+# Prompt "y/N" using the given existing bool as the default answer.
+# Prints "true" or "false" to stdout.
+ask_yn() {
+  local prompt="$1" default_bool="$2"
+  local default_letter="N"
+  [ "$default_bool" = "true" ] && default_letter="Y"
+  local suffix
+  if [ "$default_letter" = "Y" ]; then suffix="[Y/n]"; else suffix="[y/N]"; fi
+  local ans
+  read -p "${prompt} ${suffix}: " ans
+  ans="${ans:-$default_letter}"
+  if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then echo "true"; else echo "false"; fi
+}
 
 # ============================================
 # Network
@@ -27,11 +81,13 @@ fi
 echo "--- Network ---"
 echo ""
 
-read -p "Gateway [192.168.1.1]: " GATEWAY
-GATEWAY="${GATEWAY:-192.168.1.1}"
+DEFAULT_GATEWAY=$(cfg_get '.gateway' "192.168.1.1")
+read -p "Gateway [$DEFAULT_GATEWAY]: " GATEWAY
+GATEWAY="${GATEWAY:-$DEFAULT_GATEWAY}"
 
-read -p "DNS servers (comma-separated) [1.1.1.1,8.8.8.8]: " DNS_INPUT
-DNS_INPUT="${DNS_INPUT:-1.1.1.1,8.8.8.8}"
+DEFAULT_DNS=$(cfg_get_list_csv '.nameservers' "1.1.1.1,8.8.8.8")
+read -p "DNS servers (comma-separated) [$DEFAULT_DNS]: " DNS_INPUT
+DNS_INPUT="${DNS_INPUT:-$DEFAULT_DNS}"
 
 DNS_LIST=""
 IFS=',' read -ra DNS_ARRAY <<< "$DNS_INPUT"
@@ -40,16 +96,16 @@ for dns in "${DNS_ARRAY[@]}"; do
   DNS_LIST="$DNS_LIST    \"$dns\"\n"
 done
 
-read -p "Use WiFi instead of Ethernet? (y/N): " USE_WIFI_INPUT
-if [ "$USE_WIFI_INPUT" = "y" ] || [ "$USE_WIFI_INPUT" = "Y" ]; then
-  USE_WIFI="true"
-  read -p "WiFi SSID: " WIFI_SSID
+USE_WIFI=$(ask_yn "Use WiFi instead of Ethernet?" "$(cfg_get_bool '.useWifi' false)")
+if [ "$USE_WIFI" = "true" ]; then
+  DEFAULT_SSID=$(cfg_get '.wifiSSID' "")
+  read -p "WiFi SSID [$DEFAULT_SSID]: " WIFI_SSID
+  WIFI_SSID="${WIFI_SSID:-$DEFAULT_SSID}"
   if [ -z "$WIFI_SSID" ]; then
     echo "ERROR: WiFi SSID is required when using WiFi"
     exit 1
   fi
 else
-  USE_WIFI="false"
   WIFI_SSID=""
 fi
 
@@ -60,11 +116,13 @@ echo ""
 echo "--- Domain ---"
 echo ""
 
-read -p "Domain [example.com]: " DOMAIN
-DOMAIN="${DOMAIN:-example.com}"
+DEFAULT_DOMAIN=$(cfg_get '.domain' "example.com")
+read -p "Domain [$DEFAULT_DOMAIN]: " DOMAIN
+DOMAIN="${DOMAIN:-$DEFAULT_DOMAIN}"
 
-read -p "Subdomain (services at *.<subdomain>.<domain>) [k8s]: " SUBDOMAIN
-SUBDOMAIN="${SUBDOMAIN:-k8s}"
+DEFAULT_SUBDOMAIN=$(cfg_get '.subdomain' "k8s")
+read -p "Subdomain (services at *.<subdomain>.<domain>) [$DEFAULT_SUBDOMAIN]: " SUBDOMAIN
+SUBDOMAIN="${SUBDOMAIN:-$DEFAULT_SUBDOMAIN}"
 
 # ============================================
 # Kubernetes engine
@@ -75,8 +133,9 @@ echo ""
 echo "  1) k3s     - Lightweight, batteries included (recommended for most cases)"
 echo "  2) kubeadm - Standard Kubernetes via NixOS module (closer to upstream)"
 echo ""
-read -p "Engine [k3s]: " ENGINE_INPUT
-ENGINE_INPUT="${ENGINE_INPUT:-k3s}"
+DEFAULT_ENGINE=$(cfg_get '.kubernetes.engine' "k3s")
+read -p "Engine [$DEFAULT_ENGINE]: " ENGINE_INPUT
+ENGINE_INPUT="${ENGINE_INPUT:-$DEFAULT_ENGINE}"
 case "$ENGINE_INPUT" in
   1|k3s) K8S_ENGINE="k3s" ;;
   2|kubeadm) K8S_ENGINE="kubeadm" ;;
@@ -90,8 +149,9 @@ echo ""
 echo "  1) flannel - Simple VXLAN overlay (default)"
 echo "  2) calico  - Advanced: network policies, BGP, used by many production clusters"
 echo ""
-read -p "CNI plugin [flannel]: " CNI_INPUT
-CNI_INPUT="${CNI_INPUT:-flannel}"
+DEFAULT_CNI=$(cfg_get '.kubernetes.cni' "flannel")
+read -p "CNI plugin [$DEFAULT_CNI]: " CNI_INPUT
+CNI_INPUT="${CNI_INPUT:-$DEFAULT_CNI}"
 case "$CNI_INPUT" in
   1|flannel) K8S_CNI="flannel" ;;
   2|calico) K8S_CNI="calico" ;;
@@ -101,6 +161,14 @@ case "$CNI_INPUT" in
     ;;
 esac
 
+DEFAULT_POD_CIDR=$(cfg_get '.kubernetes.podCidr' "10.42.0.0/16")
+read -p "Pod CIDR [$DEFAULT_POD_CIDR]: " POD_CIDR
+POD_CIDR="${POD_CIDR:-$DEFAULT_POD_CIDR}"
+
+DEFAULT_SERVICE_CIDR=$(cfg_get '.kubernetes.serviceCidr' "10.43.0.0/16")
+read -p "Service CIDR [$DEFAULT_SERVICE_CIDR]: " SERVICE_CIDR
+SERVICE_CIDR="${SERVICE_CIDR:-$DEFAULT_SERVICE_CIDR}"
+
 # ============================================
 # Admin
 # ============================================
@@ -108,21 +176,42 @@ echo ""
 echo "--- Admin user ---"
 echo ""
 
-read -p "Admin username [admin]: " ADMIN_USER
-ADMIN_USER="${ADMIN_USER:-admin}"
+DEFAULT_ADMIN_USER=$(cfg_get '.adminUser' "admin")
+read -p "Admin username [$DEFAULT_ADMIN_USER]: " ADMIN_USER
+ADMIN_USER="${ADMIN_USER:-$DEFAULT_ADMIN_USER}"
 
-read -p "Timezone [UTC]: " TIMEZONE
-TIMEZONE="${TIMEZONE:-UTC}"
+DEFAULT_TZ=$(cfg_get '.timezone' "UTC")
+read -p "Timezone [$DEFAULT_TZ]: " TIMEZONE
+TIMEZONE="${TIMEZONE:-$DEFAULT_TZ}"
 
-# SSH key
+# Agenix identity: private key used by `agenix` to decrypt secrets and by
+# `make deploy/unlock/enroll-tpm` as SSH identity. Leave empty to omit.
+DEFAULT_AGENIX_ID=$(cfg_get '.agenixIdentity' "")
+if [ -n "$DEFAULT_AGENIX_ID" ]; then
+  read -p "Agenix identity (private key path) [$DEFAULT_AGENIX_ID]: " AGENIX_IDENTITY
+  AGENIX_IDENTITY="${AGENIX_IDENTITY:-$DEFAULT_AGENIX_ID}"
+else
+  read -p "Agenix identity (private key path, empty to skip): " AGENIX_IDENTITY
+fi
+
+# SSH key: prefer existing keys/admin.pub; fall back to ~/.ssh/id_ed25519.pub
 echo ""
-read -p "Path to SSH public key [~/.ssh/id_ed25519.pub]: " SSH_KEY_PATH
-SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
+if [ -f "$PROJECT_DIR/keys/admin.pub" ]; then
+  DEFAULT_SSH_KEY_PATH="$PROJECT_DIR/keys/admin.pub"
+else
+  DEFAULT_SSH_KEY_PATH="$HOME/.ssh/id_ed25519.pub"
+fi
+read -p "Path to SSH public key [$DEFAULT_SSH_KEY_PATH]: " SSH_KEY_PATH
+SSH_KEY_PATH="${SSH_KEY_PATH:-$DEFAULT_SSH_KEY_PATH}"
 
 if [ -f "$SSH_KEY_PATH" ]; then
   mkdir -p "$PROJECT_DIR/keys"
-  cp "$SSH_KEY_PATH" "$PROJECT_DIR/keys/admin.pub"
-  echo "SSH key copied to keys/admin.pub"
+  if [ "$SSH_KEY_PATH" != "$PROJECT_DIR/keys/admin.pub" ]; then
+    cp "$SSH_KEY_PATH" "$PROJECT_DIR/keys/admin.pub"
+    echo "SSH key copied to keys/admin.pub"
+  else
+    echo "Reusing existing keys/admin.pub"
+  fi
   SSH_KEY_LINE='    (builtins.readFile ./keys/admin.pub)'
 else
   echo "WARNING: SSH key not found at $SSH_KEY_PATH"
@@ -139,8 +228,9 @@ echo ""
 echo "  1) manual - Provide your own certificate (encrypt via secrets/tls-cert.age and tls-key.age)"
 echo "  2) acme   - Automatic via cert-manager + Cloudflare DNS-01"
 echo ""
-read -p "Certificate provider [manual]: " CERT_PROVIDER_INPUT
-CERT_PROVIDER_INPUT="${CERT_PROVIDER_INPUT:-manual}"
+DEFAULT_CERT_PROVIDER=$(cfg_get '.certificates.provider' "manual")
+read -p "Certificate provider [$DEFAULT_CERT_PROVIDER]: " CERT_PROVIDER_INPUT
+CERT_PROVIDER_INPUT="${CERT_PROVIDER_INPUT:-$DEFAULT_CERT_PROVIDER}"
 
 case "$CERT_PROVIDER_INPUT" in
   1|manual)
@@ -149,7 +239,9 @@ case "$CERT_PROVIDER_INPUT" in
     ;;
   2|acme)
     CERT_PROVIDER="acme"
-    read -p "ACME email for Let's Encrypt: " ACME_EMAIL
+    DEFAULT_ACME_EMAIL=$(cfg_get '.acmeEmail' "")
+    read -p "ACME email for Let's Encrypt [$DEFAULT_ACME_EMAIL]: " ACME_EMAIL
+    ACME_EMAIL="${ACME_EMAIL:-$DEFAULT_ACME_EMAIL}"
     if [ -z "$ACME_EMAIL" ]; then
       echo "ERROR: ACME email is required for certificate issuance"
       exit 1
@@ -170,14 +262,17 @@ echo ""
 
 PREFIX=$(echo "$GATEWAY" | sed 's/\.[0-9]*$//')
 
-read -p "MetalLB pool start IP [${PREFIX}.200]: " METALLB_START
-METALLB_START="${METALLB_START:-${PREFIX}.200}"
+DEFAULT_METALLB_START=$(cfg_get '.metallbPoolStart' "${PREFIX}.200")
+read -p "MetalLB pool start IP [$DEFAULT_METALLB_START]: " METALLB_START
+METALLB_START="${METALLB_START:-$DEFAULT_METALLB_START}"
 
-read -p "MetalLB pool end IP [${PREFIX}.254]: " METALLB_END
-METALLB_END="${METALLB_END:-${PREFIX}.254}"
+DEFAULT_METALLB_END=$(cfg_get '.metallbPoolEnd' "${PREFIX}.254")
+read -p "MetalLB pool end IP [$DEFAULT_METALLB_END]: " METALLB_END
+METALLB_END="${METALLB_END:-$DEFAULT_METALLB_END}"
 
-read -p "Traefik IP (from MetalLB pool) [$METALLB_START]: " TRAEFIK_IP
-TRAEFIK_IP="${TRAEFIK_IP:-$METALLB_START}"
+DEFAULT_TRAEFIK=$(cfg_get '.traefikIP' "$METALLB_START")
+read -p "Traefik IP (from MetalLB pool) [$DEFAULT_TRAEFIK]: " TRAEFIK_IP
+TRAEFIK_IP="${TRAEFIK_IP:-$DEFAULT_TRAEFIK}"
 
 # ============================================
 # Storage
@@ -186,16 +281,25 @@ echo ""
 echo "--- Storage ---"
 echo ""
 
-read -p "Use NFS storage from a NAS? (y/N): " USE_NFS_INPUT
-if [ "$USE_NFS_INPUT" = "y" ] || [ "$USE_NFS_INPUT" = "Y" ]; then
-  USE_NFS="true"
-  read -p "NAS IP: " NAS_IP
-  read -p "NAS hostname [nas1]: " NAS_HOSTNAME
-  NAS_HOSTNAME="${NAS_HOSTNAME:-nas1}"
-  read -p "NFS export path [/]: " NAS_NFS_PATH
-  NAS_NFS_PATH="${NAS_NFS_PATH:-/}"
-else
-  USE_NFS="false"
+USE_NFS=$(ask_yn "Use NFS storage from a NAS?" "$(cfg_get_bool '.storage.useNFS' false)")
+if [ "$USE_NFS" = "true" ]; then
+  # First (any) NAS entry gets pre-filled; otherwise hardcoded defaults.
+  EXISTING_NAS_NAME=""
+  if [ -n "$EXISTING_CONFIG" ] && command -v jq >/dev/null 2>&1; then
+    EXISTING_NAS_NAME=$(nix eval --json --impure --expr \
+      "builtins.attrNames ((import $EXISTING_CONFIG).nas or {})" 2>/dev/null \
+      | jq -r '.[0] // ""' 2>/dev/null || true)
+  fi
+  DEFAULT_NAS_IP=$(cfg_get ".nas.${EXISTING_NAS_NAME}.ip" "")
+  DEFAULT_NAS_HOSTNAME="${EXISTING_NAS_NAME:-nas1}"
+  DEFAULT_NAS_PATH=$(cfg_get ".nas.${EXISTING_NAS_NAME}.nfsExports.nfsPath" "/")
+
+  read -p "NAS IP [$DEFAULT_NAS_IP]: " NAS_IP
+  NAS_IP="${NAS_IP:-$DEFAULT_NAS_IP}"
+  read -p "NAS hostname [$DEFAULT_NAS_HOSTNAME]: " NAS_HOSTNAME
+  NAS_HOSTNAME="${NAS_HOSTNAME:-$DEFAULT_NAS_HOSTNAME}"
+  read -p "NFS export path [$DEFAULT_NAS_PATH]: " NAS_NFS_PATH
+  NAS_NFS_PATH="${NAS_NFS_PATH:-$DEFAULT_NAS_PATH}"
 fi
 
 # ============================================
@@ -205,11 +309,20 @@ echo ""
 echo "--- Bootstrap server (first node) ---"
 echo ""
 
-read -p "Node name [server1]: " NODE_NAME
-NODE_NAME="${NODE_NAME:-server1}"
+EXISTING_BOOTSTRAP=""
+if [ -n "$EXISTING_CONFIG" ]; then
+  EXISTING_BOOTSTRAP=$(nix eval --raw --impure --expr \
+    "let c = import $EXISTING_CONFIG; in builtins.head (builtins.filter (n: c.nodes.\${n}.bootstrap or false) (builtins.attrNames c.nodes))" \
+    2>/dev/null || true)
+fi
 
-read -p "Server IP [${PREFIX}.100]: " SERVER_IP
-SERVER_IP="${SERVER_IP:-${PREFIX}.100}"
+DEFAULT_NODE_NAME="${EXISTING_BOOTSTRAP:-server1}"
+read -p "Node name [$DEFAULT_NODE_NAME]: " NODE_NAME
+NODE_NAME="${NODE_NAME:-$DEFAULT_NODE_NAME}"
+
+DEFAULT_SERVER_IP=$(cfg_get ".nodes.${EXISTING_BOOTSTRAP}.ip" "${PREFIX}.100")
+read -p "Server IP [$DEFAULT_SERVER_IP]: " SERVER_IP
+SERVER_IP="${SERVER_IP:-$DEFAULT_SERVER_IP}"
 
 # ============================================
 # Disk encryption
@@ -218,16 +331,17 @@ echo ""
 echo "--- Disk encryption ---"
 echo ""
 
-read -p "Enable LUKS disk encryption? (y/N): " ENCRYPT_INPUT
-if [ "$ENCRYPT_INPUT" = "y" ] || [ "$ENCRYPT_INPUT" = "Y" ]; then
-  ENCRYPT_ENABLE="true"
+DEFAULT_ENCRYPT=$(cfg_get_bool ".nodes.${EXISTING_BOOTSTRAP}.encryption.enable" false)
+ENCRYPT_ENABLE=$(ask_yn "Enable LUKS disk encryption?" "$DEFAULT_ENCRYPT")
+if [ "$ENCRYPT_ENABLE" = "true" ]; then
   echo ""
   echo "  Unlock method:"
   echo "    1) ssh - SSH into initrd to type passphrase (manual, most secure)"
   echo "    2) tpm - Automatic via TPM2 chip (unattended reboot, needs TPM hardware)"
   echo ""
-  read -p "Unlock method [ssh]: " UNLOCK_METHOD_INPUT
-  UNLOCK_METHOD_INPUT="${UNLOCK_METHOD_INPUT:-ssh}"
+  DEFAULT_UNLOCK=$(cfg_get ".nodes.${EXISTING_BOOTSTRAP}.encryption.unlock" "ssh")
+  read -p "Unlock method [$DEFAULT_UNLOCK]: " UNLOCK_METHOD_INPUT
+  UNLOCK_METHOD_INPUT="${UNLOCK_METHOD_INPUT:-$DEFAULT_UNLOCK}"
   case "$UNLOCK_METHOD_INPUT" in
     1|ssh) UNLOCK_METHOD="ssh" ;;
     2|tpm) UNLOCK_METHOD="tpm" ;;
@@ -236,12 +350,10 @@ if [ "$ENCRYPT_INPUT" = "y" ] || [ "$ENCRYPT_INPUT" = "Y" ]; then
       exit 1
       ;;
   esac
-  if [ "$UNLOCK_METHOD" = "ssh" ]; then
-    read -p "Initrd SSH port [2222]: " SSH_INITRD_PORT
-    SSH_INITRD_PORT="${SSH_INITRD_PORT:-2222}"
-  fi
-else
-  ENCRYPT_ENABLE="false"
+  # sshPort is always meaningful (initrd SSH is always enabled as fallback).
+  DEFAULT_SSH_PORT=$(cfg_get ".nodes.${EXISTING_BOOTSTRAP}.encryption.sshPort" "2222")
+  read -p "Initrd SSH port [$DEFAULT_SSH_PORT]: " SSH_INITRD_PORT
+  SSH_INITRD_PORT="${SSH_INITRD_PORT:-$DEFAULT_SSH_PORT}"
 fi
 
 # ============================================
@@ -251,44 +363,57 @@ echo ""
 echo "--- Services (all optional, can be changed later in config.nix) ---"
 echo ""
 
-SVC_REGISTRY="false"
-read -p "Enable Docker Registry? (y/N): " SVC_INPUT
-[ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_REGISTRY="true"
+SVC_REGISTRY=$(ask_yn "Enable Docker Registry?" "$(cfg_get_bool '.services.docker-registry' false)")
+SVC_MIRROR=$(ask_yn "Enable Docker Mirror (pull-through cache)?" "$(cfg_get_bool '.services.docker-mirror' false)")
 
-SVC_MIRROR="false"
-read -p "Enable Docker Mirror (pull-through cache)? (y/N): " SVC_INPUT
-[ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ] && SVC_MIRROR="true"
-
-SVC_RUNNERS="false"
 GITHUB_CONFIG_URL=""
 GITHUB_MAX_RUNNERS="5"
 GITHUB_RUNNER_NAME="self-hosted-linux"
 GITHUB_AUTH_METHOD="app"
 GITHUB_APP_ID=""
 GITHUB_INSTALLATION_ID=""
-read -p "Enable GitHub Actions self-hosted runners? (y/N): " SVC_INPUT
-if [ "$SVC_INPUT" = "y" ] || [ "$SVC_INPUT" = "Y" ]; then
-  SVC_RUNNERS="true"
-  read -p "  GitHub org/repo URL (e.g. https://github.com/your-org): " GITHUB_CONFIG_URL
+
+SVC_RUNNERS=$(ask_yn "Enable GitHub Actions self-hosted runners?" "$(cfg_get_bool '.services.github-runners' false)")
+if [ "$SVC_RUNNERS" = "true" ]; then
+  DEFAULT_GH_URL=$(cfg_get '."github-runners".configUrl' "")
+  read -p "  GitHub org/repo URL [$DEFAULT_GH_URL]: " GITHUB_CONFIG_URL
+  GITHUB_CONFIG_URL="${GITHUB_CONFIG_URL:-$DEFAULT_GH_URL}"
   if [ -z "$GITHUB_CONFIG_URL" ]; then
     echo "  ERROR: GitHub config URL is required for runners"
     exit 1
   fi
-  read -p "  Runner name [self-hosted-linux]: " GITHUB_RUNNER_NAME
-  GITHUB_RUNNER_NAME="${GITHUB_RUNNER_NAME:-self-hosted-linux}"
-  read -p "  Max runners [5]: " GITHUB_MAX_RUNNERS
-  GITHUB_MAX_RUNNERS="${GITHUB_MAX_RUNNERS:-5}"
+
+  DEFAULT_RUNNER_NAME=$(cfg_get '."github-runners".runnerName' "self-hosted-linux")
+  read -p "  Runner name [$DEFAULT_RUNNER_NAME]: " GITHUB_RUNNER_NAME
+  GITHUB_RUNNER_NAME="${GITHUB_RUNNER_NAME:-$DEFAULT_RUNNER_NAME}"
+
+  DEFAULT_MAX_RUNNERS=$(cfg_get '."github-runners".maxRunners' "5")
+  read -p "  Max runners [$DEFAULT_MAX_RUNNERS]: " GITHUB_MAX_RUNNERS
+  GITHUB_MAX_RUNNERS="${GITHUB_MAX_RUNNERS:-$DEFAULT_MAX_RUNNERS}"
+
   echo ""
   echo "  Authentication:"
   echo "    1) GitHub App (recommended - minimal scopes, rotating tokens)"
   echo "    2) PAT         (simpler - fine-grained or classic personal token)"
-  read -p "  Auth method [app]: " AUTH_INPUT
-  AUTH_INPUT="${AUTH_INPUT:-app}"
+  # Detect prior auth method by checking which sub-attr exists
+  DEFAULT_AUTH="app"
+  if [ -n "$EXISTING_CONFIG" ]; then
+    HAS_APP=$(nix eval --impure --expr "((import $EXISTING_CONFIG).\"github-runners\".githubApp or null) != null" 2>/dev/null || echo "false")
+    if [ "$HAS_APP" != "true" ] && [ "$(cfg_get_bool '.services.github-runners' false)" = "true" ]; then
+      DEFAULT_AUTH="pat"
+    fi
+  fi
+  read -p "  Auth method [$DEFAULT_AUTH]: " AUTH_INPUT
+  AUTH_INPUT="${AUTH_INPUT:-$DEFAULT_AUTH}"
   case "$AUTH_INPUT" in
     1|app)
       GITHUB_AUTH_METHOD="app"
-      read -p "  App ID: " GITHUB_APP_ID
-      read -p "  Installation ID: " GITHUB_INSTALLATION_ID
+      DEFAULT_APP_ID=$(cfg_get '."github-runners".githubApp.appId' "")
+      DEFAULT_INSTALL_ID=$(cfg_get '."github-runners".githubApp.installationId' "")
+      read -p "  App ID [$DEFAULT_APP_ID]: " GITHUB_APP_ID
+      GITHUB_APP_ID="${GITHUB_APP_ID:-$DEFAULT_APP_ID}"
+      read -p "  Installation ID [$DEFAULT_INSTALL_ID]: " GITHUB_INSTALLATION_ID
+      GITHUB_INSTALLATION_ID="${GITHUB_INSTALLATION_ID:-$DEFAULT_INSTALL_ID}"
       if [ -z "$GITHUB_APP_ID" ] || [ -z "$GITHUB_INSTALLATION_ID" ]; then
         echo "  ERROR: Both App ID and Installation ID are required"
         exit 1
@@ -314,6 +439,66 @@ echo "--- Additional nodes (optional) ---"
 echo ""
 
 EXTRA_NODES=""
+
+# Pre-fill existing extra nodes first: user can keep, edit, or drop each.
+if [ -n "$EXISTING_CONFIG" ] && command -v jq >/dev/null 2>&1; then
+  EXTRA_EXISTING=$(nix eval --json --impure --expr \
+    "let c = import $EXISTING_CONFIG; in builtins.filter (n: !(c.nodes.\${n}.bootstrap or false)) (builtins.attrNames c.nodes)" \
+    2>/dev/null | jq -r '.[]' 2>/dev/null || true)
+
+  for EX_NAME in $EXTRA_EXISTING; do
+    echo "Existing node: $EX_NAME"
+    KEEP=$(ask_yn "  Keep this node?" "true")
+    if [ "$KEEP" != "true" ]; then
+      echo "  Dropped $EX_NAME"
+      echo ""
+      continue
+    fi
+
+    EX_IP_DEFAULT=$(cfg_get ".nodes.${EX_NAME}.ip" "")
+    read -p "  IP address [$EX_IP_DEFAULT]: " EX_IP
+    EX_IP="${EX_IP:-$EX_IP_DEFAULT}"
+
+    EX_ROLE_DEFAULT=$(cfg_get ".nodes.${EX_NAME}.role" "agent")
+    read -p "  Role (server/agent) [$EX_ROLE_DEFAULT]: " EX_ROLE_INPUT
+    EX_ROLE_INPUT="${EX_ROLE_INPUT:-$EX_ROLE_DEFAULT}"
+    case "$EX_ROLE_INPUT" in
+      1|server) EX_ROLE="server" ;;
+      *) EX_ROLE="agent" ;;
+    esac
+
+    EX_ENCRYPT_DEFAULT=$(cfg_get_bool ".nodes.${EX_NAME}.encryption.enable" false)
+    EX_ENCRYPT=$(ask_yn "  Enable disk encryption?" "$EX_ENCRYPT_DEFAULT")
+    EX_ENCRYPT_NIX=""
+    if [ "$EX_ENCRYPT" = "true" ]; then
+      EX_UNLOCK_DEFAULT=$(cfg_get ".nodes.${EX_NAME}.encryption.unlock" "ssh")
+      read -p "  Unlock method (ssh/tpm) [$EX_UNLOCK_DEFAULT]: " EX_UNLOCK
+      EX_UNLOCK="${EX_UNLOCK:-$EX_UNLOCK_DEFAULT}"
+      EX_PORT_DEFAULT=$(cfg_get ".nodes.${EX_NAME}.encryption.sshPort" "2222")
+      read -p "  Initrd SSH port [$EX_PORT_DEFAULT]: " EX_PORT
+      EX_PORT="${EX_PORT:-$EX_PORT_DEFAULT}"
+      if [ "$EX_UNLOCK" = "tpm" ]; then
+        EX_ENCRYPT_NIX="
+      encryption = { enable = true; unlock = \"tpm\"; sshPort = ${EX_PORT}; };"
+      else
+        EX_ENCRYPT_NIX="
+      encryption = { enable = true; unlock = \"ssh\"; sshPort = ${EX_PORT}; };"
+      fi
+    fi
+
+    EXTRA_NODES="$EXTRA_NODES
+    $EX_NAME = {
+      ip = \"$EX_IP\";
+      role = \"$EX_ROLE\";
+      bootstrap = false;$EX_ENCRYPT_NIX
+    };"
+
+    echo "  Kept $EX_NAME ($EX_IP) as $EX_ROLE"
+    echo ""
+  done
+fi
+
+# Loop for brand-new nodes.
 while true; do
   read -p "Add another node? (y/N): " ADD_NODE
   if [ "$ADD_NODE" != "y" ] && [ "$ADD_NODE" != "Y" ]; then
@@ -346,12 +531,12 @@ while true; do
   if [ "$EXTRA_ENCRYPT" = "y" ] || [ "$EXTRA_ENCRYPT" = "Y" ]; then
     read -p "  Unlock method (ssh/tpm) [ssh]: " EXTRA_UNLOCK
     EXTRA_UNLOCK="${EXTRA_UNLOCK:-ssh}"
+    read -p "  Initrd SSH port [2222]: " EXTRA_SSH_PORT
+    EXTRA_SSH_PORT="${EXTRA_SSH_PORT:-2222}"
     if [ "$EXTRA_UNLOCK" = "tpm" ]; then
       EXTRA_ENCRYPT_NIX="
-      encryption = { enable = true; unlock = \"tpm\"; };"
+      encryption = { enable = true; unlock = \"tpm\"; sshPort = ${EXTRA_SSH_PORT}; };"
     else
-      read -p "  Initrd SSH port [2222]: " EXTRA_SSH_PORT
-      EXTRA_SSH_PORT="${EXTRA_SSH_PORT:-2222}"
       EXTRA_ENCRYPT_NIX="
       encryption = { enable = true; unlock = \"ssh\"; sshPort = ${EXTRA_SSH_PORT}; };"
     fi
@@ -404,7 +589,7 @@ BOOTSTRAP_ENCRYPT=""
 if [ "$ENCRYPT_ENABLE" = "true" ]; then
   if [ "$UNLOCK_METHOD" = "tpm" ]; then
     BOOTSTRAP_ENCRYPT="
-      encryption = { enable = true; unlock = \"tpm\"; };"
+      encryption = { enable = true; unlock = \"tpm\"; sshPort = ${SSH_INITRD_PORT}; };"
   else
     BOOTSTRAP_ENCRYPT="
       encryption = { enable = true; unlock = \"ssh\"; sshPort = ${SSH_INITRD_PORT}; };"
@@ -419,6 +604,14 @@ if [ -n "$ACME_EMAIL" ]; then
   ACME_LINE="acmeEmail = \"$ACME_EMAIL\";"
 else
   ACME_LINE="# acmeEmail = \"you@example.com\"; # only needed with provider = \"acme\""
+fi
+
+# ============================================
+# Build agenix identity line
+# ============================================
+AGENIX_LINE=""
+if [ -n "$AGENIX_IDENTITY" ]; then
+  AGENIX_LINE="agenixIdentity = \"$AGENIX_IDENTITY\";"
 fi
 
 # ============================================
@@ -452,6 +645,7 @@ $(echo -e "$DNS_LIST")  ];
   adminSSHKeys = [
 $SSH_KEY_LINE
   ];
+  $AGENIX_LINE
   puid = 1000;
   pgid = 1000;
   $ACME_LINE
@@ -463,6 +657,8 @@ $SSH_KEY_LINE
   kubernetes = {
     engine = "$K8S_ENGINE";
     cni = "$K8S_CNI";
+    podCidr = "$POD_CIDR";
+    serviceCidr = "$SERVICE_CIDR";
   };
 
   services = {
@@ -578,7 +774,7 @@ echo "  3. Run 'make install NODE=$NODE_NAME'"
 if [ "$ENCRYPT_ENABLE" = "true" ] && [ "$UNLOCK_METHOD" = "tpm" ]; then
   echo ""
   echo "  After first boot, enroll TPM key:"
-  echo "    make ssh NODE=$NODE_NAME"
-  echo "    sudo systemd-cryptenroll /dev/disk/by-partlabel/disk-main-root --tpm2-device=auto --tpm2-pcrs=0+7"
+  echo "    make unlock NODE=$NODE_NAME       # first boot (TPM not yet enrolled)"
+  echo "    make enroll-tpm NODE=$NODE_NAME   # once"
 fi
 echo ""

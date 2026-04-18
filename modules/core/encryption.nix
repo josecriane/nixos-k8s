@@ -19,11 +19,13 @@ let
 in
 lib.mkIf enableEncryption {
 
-  # ============================================
-  # SSH UNLOCK (connect to initrd to type passphrase)
-  # ============================================
+  boot.initrd.systemd.enable = true;
 
-  boot.initrd.network = lib.mkIf (unlockMethod == "ssh") {
+  # Initrd SSH is always enabled when encryption is on.
+  # - unlock=ssh: primary unlock channel.
+  # - unlock=tpm: fallback before TPM is enrolled (first boot after install)
+  #   and when TPM unlock fails (firmware update, PCR drift, disk moved).
+  boot.initrd.network = {
     enable = true;
 
     ssh = {
@@ -38,7 +40,7 @@ lib.mkIf enableEncryption {
   };
 
   # systemd-networkd in initrd for static IP
-  boot.initrd.systemd.network = lib.mkIf (unlockMethod == "ssh") {
+  boot.initrd.systemd.network = {
     enable = true;
     networks."10-lan" = {
       matchConfig.Name = "en*";
@@ -47,17 +49,10 @@ lib.mkIf enableEncryption {
     };
   };
 
-  # ============================================
-  # TPM UNLOCK (automatic, no manual intervention)
-  # ============================================
-
   # TPM2 auto-unlock: after first install, enroll the TPM key with:
-  #   sudo systemd-cryptenroll /dev/disk/by-partlabel/disk-main-root --tpm2-device=auto --tpm2-pcrs=0+7
+  #   make enroll-tpm NODE=<name>
   # This binds the key to the current firmware + secure boot state.
   # The passphrase remains as fallback if TPM unlock fails.
-
-  boot.initrd.systemd.enable = true;
-
   environment.systemPackages = lib.mkIf (unlockMethod == "tpm") [
     pkgs.tpm2-tss
   ];

@@ -15,6 +15,7 @@ let
   k8sCfg = serverConfig.kubernetes or { };
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
+  cni = k8sCfg.cni or "flannel";
 
   isServer = nodeConfig.role == "server";
   isAgent = nodeConfig.role == "agent";
@@ -68,6 +69,13 @@ in
       kubeconfig = {
         server = "https://${nodeConfig.bootstrapIP}:6443";
       };
+      # When the CNI is Calico, also expose its plugin binary to kubelet.
+      # NixOS module recreates /opt/cni/bin on each kubelet restart using
+      # these packages; without this the Calico DaemonSet-installed binary
+      # gets wiped on reboot.
+      cni.packages = lib.mkIf (cni == "calico") [
+        pkgs.calico-cni-plugin
+      ];
     };
 
     proxy = {

@@ -11,7 +11,7 @@ node-ip = $(shell $(NIX_EVAL) --expr '(import ./config.nix).nodes.$(1).ip')
 # Get the bootstrap node name
 bootstrap-node = $(shell $(NIX_EVAL) --expr 'let c = import ./config.nix; in builtins.head (builtins.filter (n: c.nodes.$${n}.bootstrap or false) (builtins.attrNames c.nodes))')
 
-.PHONY: help setup install deploy deploy-all bootstrap ssh unlock status logs shell fmt check clean reinstall
+.PHONY: help setup install deploy deploy-all bootstrap ssh unlock enroll-tpm status logs shell fmt check clean reinstall
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -60,6 +60,10 @@ ssh: config.nix ## SSH into a node: make ssh NODE=server1
 unlock: config.nix ## SSH-unlock a node's LUKS disk via initrd: make unlock NODE=server1
 	@[ -n "$(NODE)" ] || { echo "Usage: make unlock NODE=<name>"; exit 1; }
 	@./scripts/unlock.sh $(NODE)
+
+enroll-tpm: config.nix ## Enroll TPM2 for auto-unlock (run once after first boot)
+	@[ -n "$(NODE)" ] || { echo "Usage: make enroll-tpm NODE=<name>"; exit 1; }
+	@./scripts/enroll-tpm.sh $(NODE)
 
 status: config.nix ## Show cluster status
 	@BOOT=$(bootstrap-node); \

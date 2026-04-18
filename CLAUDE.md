@@ -113,6 +113,7 @@ On other nodes: only `k3s-infrastructure` target (K3s join + CNI).
 | `make bootstrap` | Initial cluster bootstrap (server first, then all) |
 | `make ssh NODE=x` | SSH into a node |
 | `make unlock NODE=x` | SSH-unlock LUKS disk via initrd |
+| `make enroll-tpm NODE=x` | Enroll TPM2 for auto-unlock (once, after first boot) |
 | `make status` | Show cluster status |
 | `make logs NODE=x` | Show K3s logs for a node |
 | `make check` | Build all configs without deploying |
