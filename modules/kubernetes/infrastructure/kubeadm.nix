@@ -69,12 +69,18 @@ in
       kubeconfig = {
         server = "https://${nodeConfig.bootstrapIP}:6443";
       };
-      # When the CNI is Calico, also expose its plugin binary to kubelet.
+      # When the CNI is Calico, also expose its plugin binaries to kubelet.
       # NixOS module recreates /opt/cni/bin on each kubelet restart using
       # these packages; without this the Calico DaemonSet-installed binary
-      # gets wiped on reboot.
+      # gets wiped. nixpkgs' calico-cni-plugin only ships `calico`; Calico
+      # also needs `calico-ipam` pointing at the same binary (as the
+      # DaemonSet's install step does upstream).
       cni.packages = lib.mkIf (cni == "calico") [
-        pkgs.calico-cni-plugin
+        (pkgs.runCommand "calico-cni-bundle" { } ''
+          mkdir -p $out/bin
+          ln -s ${pkgs.calico-cni-plugin}/bin/calico $out/bin/calico
+          ln -s ${pkgs.calico-cni-plugin}/bin/calico $out/bin/calico-ipam
+        '')
       ];
     };
 
@@ -98,7 +104,9 @@ in
             fallthrough in-addr.arpa ip6.arpa
           }
           prometheus :10055
-          forward . ${builtins.concatStringsSep " " serverConfig.nameservers}
+          forward . ${builtins.concatStringsSep " " serverConfig.nameservers} {
+            policy sequential
+          }
           cache 30
           loop
           reload
@@ -108,6 +116,16 @@ in
     };
 
     clusterCidr = podCidr;
+  };
+
+  # Container workloads spawned by containerd (DinD sidecars, databases in CI)
+  # inherit containerd's rlimits. NixOS defaults are too low (soft nofile=1024),
+  # which causes EMFILE inside heavy workloads like MongoDB. Mirror Docker
+  # upstream defaults.
+  systemd.services.containerd.serviceConfig = {
+    LimitNOFILE = "infinity";
+    LimitNOFILESoft = "infinity";
+    LimitNPROC = "infinity";
   };
 
   # Firewall

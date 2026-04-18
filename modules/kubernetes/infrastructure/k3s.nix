@@ -71,7 +71,10 @@ in
     );
   };
 
-  # Ensure K3s waits for network to be ready
+  # Ensure K3s waits for network to be ready; bump rlimits so that workloads
+  # spawned by k3s's embedded containerd (DinD sidecars, databases in CI, etc)
+  # inherit reasonable defaults. NixOS default soft nofile is 1024, which is
+  # too low for heavy users like MongoDB.
   systemd.services.k3s = {
     after = [
       "network-online.target"
@@ -79,6 +82,11 @@ in
     ];
     wants = [ "network-online.target" ];
     requires = [ "k3s-network-check.service" ];
+    serviceConfig = {
+      LimitNOFILE = "infinity";
+      LimitNOFILESoft = "infinity";
+      LimitNPROC = "infinity";
+    };
   };
 
   # Firewall
