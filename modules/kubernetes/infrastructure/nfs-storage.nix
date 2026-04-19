@@ -11,14 +11,16 @@
 
 let
   k8s = import ../lib.nix { inherit pkgs serverConfig; };
-  ns = "default";
+  cfg = config.k8s.storage.nfs;
+  ns = cfg.namespace;
+  pvcName = cfg.pvcName;
   markerFile = "/var/lib/nfs-storage-setup-done";
 
   useNFS = serverConfig.storage.useNFS or false;
 
-  enabledNas = lib.filterAttrs (name: cfg: cfg.enabled or false) (serverConfig.nas or { });
+  enabledNas = lib.filterAttrs (name: nasCfg: nasCfg.enabled or false) (serverConfig.nas or { });
   primaryNas = lib.findFirst (
-    cfg: (cfg.role or "all") == "media" || (cfg.role or "all") == "all"
+    nasCfg: (nasCfg.role or "all") == "media" || (nasCfg.role or "all") == "all"
   ) null (lib.attrValues enabledNas);
 
   nfsServer = if primaryNas != null then primaryNas.ip else "";
@@ -26,32 +28,53 @@ let
   nfsPath = nfsExports.nfsPath or "/";
 
   nasMountPoint = "/mnt/nas1";
-  localDataPath = "/var/lib/k8s-data";
-  hostDataPath = if useNFS then nasMountPoint else localDataPath;
+  hostDataPath = if useNFS then nasMountPoint else cfg.localDataPath;
 
-  secondaryMountUnits =
-    let
-      secondaryNasList = lib.filter (
-        cfg: (cfg.enabled or false) && (cfg.mediaPaths or [ ]) != [ ] && cfg != primaryNas
-      ) (lib.attrValues (serverConfig.nas or { }));
-      pathToMountUnit =
-        path: (builtins.replaceStrings [ "/" ] [ "-" ] (lib.removePrefix "/" path)) + ".mount";
-    in
-    lib.concatMap (
-      nasCfg:
-      [ (pathToMountUnit "/mnt/${nasCfg.hostname}") ]
-      ++ map (path: pathToMountUnit "${nasMountPoint}/${path}") nasCfg.mediaPaths
-    ) secondaryNasList;
+  pvName = "${pvcName}-pv";
 in
 {
-  systemd.services.nfs-storage-setup = {
+  options.k8s.storage.nfs = {
+    namespace = lib.mkOption {
+      type = lib.types.str;
+      default = "default";
+      description = "Namespace for the shared PVC.";
+    };
+
+    pvcName = lib.mkOption {
+      type = lib.types.str;
+      default = "shared-data";
+      description = "Name of the PVC (and base name of the PV: <pvcName>-pv).";
+    };
+
+    localDataPath = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/k8s-data";
+      description = "Host path used when useNFS = false.";
+    };
+
+    directoryLayout = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "data" ];
+      example = [ "torrents/movies" "media/tv" "backups" ];
+      description = "Subdirectories (relative to the data root) created before binding the PVC.";
+    };
+
+    extraMountUnits = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "mnt-nas2.mount" ];
+      description = "Extra systemd mount units this service must wait for (useNFS only).";
+    };
+  };
+
+  config.systemd.services.nfs-storage-setup = {
     description = "Setup storage for K8s services";
     after = [
       "k3s-infrastructure.target"
     ]
-    ++ lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ secondaryMountUnits);
+    ++ lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ cfg.extraMountUnits);
     requires = [ "k3s-infrastructure.target" ];
-    wants = lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ secondaryMountUnits);
+    wants = lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ cfg.extraMountUnits);
     # TIER 2: Storage
     wantedBy = [ "k3s-storage.target" ];
     before = [ "k3s-storage.target" ];
@@ -87,7 +110,7 @@ in
 
               if ! $MOUNTPOINT -q "${nasMountPoint}"; then
                 echo "ERROR: Could not mount ${nasMountPoint}, using local storage..."
-                HOST_DATA_PATH="${localDataPath}"
+                HOST_DATA_PATH="${cfg.localDataPath}"
                 USE_NFS="false"
               fi
             ''
@@ -95,16 +118,21 @@ in
             ""
         }
 
-        # Create base directory structure
+        # Ensure the target namespace exists (PVC will fail to apply otherwise).
+        $KUBECTL get namespace ${ns} &>/dev/null || $KUBECTL create namespace ${ns}
+
+        # Create configured directory structure
         echo "Creating directory structure..."
-        mkdir -p "$HOST_DATA_PATH/data"
-        chmod 775 "$HOST_DATA_PATH/data" 2>/dev/null || true
+        ${lib.concatMapStringsSep "\n" (d: ''
+          mkdir -p "$HOST_DATA_PATH/${d}"
+          chmod 775 "$HOST_DATA_PATH/${d}" 2>/dev/null || true
+        '') cfg.directoryLayout}
         echo "Directory structure created at $HOST_DATA_PATH"
 
         # Create PV + PVC if not already Bound
-        EXISTING_STATUS=$($KUBECTL get pvc shared-data -n ${ns} -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        EXISTING_STATUS=$($KUBECTL get pvc ${pvcName} -n ${ns} -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         if [ "$EXISTING_STATUS" = "Bound" ]; then
-          echo "PV/PVC shared-data already exists and is Bound, skipping creation"
+          echo "PV/PVC ${pvcName} already exists and is Bound, skipping creation"
         else
           if [ "$USE_NFS" = "true" ]; then
             # Multi-node: use NFS PV type (accessible from any node)
@@ -112,7 +140,7 @@ in
         apiVersion: v1
         kind: PersistentVolume
         metadata:
-          name: shared-data-pv
+          name: ${pvName}
           labels:
             type: nfs
         spec:
@@ -129,7 +157,7 @@ in
         apiVersion: v1
         kind: PersistentVolumeClaim
         metadata:
-          name: shared-data
+          name: ${pvcName}
           namespace: ${ns}
         spec:
           accessModes:
@@ -138,16 +166,16 @@ in
           resources:
             requests:
               storage: 1Ti
-          volumeName: shared-data-pv
+          volumeName: ${pvName}
         PVEOF
-            echo "PV/PVC shared-data created (NFS: $NFS_SERVER:$NFS_PATH)"
+            echo "PV/PVC ${pvcName} created (NFS: $NFS_SERVER:$NFS_PATH)"
           else
             # Single-node: use hostPath with node affinity
             cat <<PVEOF | $KUBECTL apply -f -
         apiVersion: v1
         kind: PersistentVolume
         metadata:
-          name: shared-data-pv
+          name: ${pvName}
           labels:
             type: local
         spec:
@@ -172,7 +200,7 @@ in
         apiVersion: v1
         kind: PersistentVolumeClaim
         metadata:
-          name: shared-data
+          name: ${pvcName}
           namespace: ${ns}
         spec:
           accessModes:
@@ -181,16 +209,16 @@ in
           resources:
             requests:
               storage: 500Gi
-          volumeName: shared-data-pv
+          volumeName: ${pvName}
         PVEOF
-            echo "PV/PVC shared-data created (hostPath: $HOST_DATA_PATH, node: ${nodeConfig.name})"
+            echo "PV/PVC ${pvcName} created (hostPath: $HOST_DATA_PATH, node: ${nodeConfig.name})"
           fi
 
-          echo "Waiting for PVC shared-data to be Bound..."
+          echo "Waiting for PVC ${pvcName} to be Bound..."
           for i in $(seq 1 30); do
-            STATUS=$($KUBECTL get pvc shared-data -n ${ns} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+            STATUS=$($KUBECTL get pvc ${pvcName} -n ${ns} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
             if [ "$STATUS" = "Bound" ]; then
-              echo "PVC shared-data: Bound"
+              echo "PVC ${pvcName}: Bound"
               break
             fi
             echo "  Status: $STATUS ($i/30)"
@@ -199,7 +227,7 @@ in
         fi
 
         print_success "NFS Storage" \
-          "PVC: shared-data (${ns})" \
+          "PVC: ${pvcName} (${ns})" \
           "Data path: $HOST_DATA_PATH"
 
         create_marker "${markerFile}"

@@ -33,6 +33,8 @@
           clusterConfig,
           hostsPath,
           secretsPath,
+          extraModules ? [ ],
+          extraSpecialArgs ? { },
         }:
         let
           nodes = clusterConfig.nodes;
@@ -61,7 +63,7 @@
                   clusterNodes
                   ;
                 serverConfig = clusterConfig;
-              };
+              } // extraSpecialArgs;
               modules = [
                 disko.nixosModules.disko
                 agenix.nixosModules.default
@@ -69,7 +71,7 @@
                 "${self}/modules/core"
                 "${self}/modules/services"
                 "${self}/modules/kubernetes"
-              ];
+              ] ++ extraModules;
             };
         in
         builtins.mapAttrs (name: _: mkHost name) nodes;

@@ -61,14 +61,23 @@ In your private repo, create a `flake.nix`:
   outputs = { self, nixos-k8s, ... }: {
     nixosConfigurations = nixos-k8s.lib.mkCluster {
       clusterConfig = import ./config.nix;
-      hostsPath = ./hosts;
+      hostsPath = "${self}/hosts";
       secretsPath = ./secrets;
+
+      # Optional: inject your own modules and specialArgs on top of the base.
+      extraModules = [
+        ./modules/kubernetes   # your own K8s services
+        ./modules/core         # your own host-level tweaks
+      ];
+      extraSpecialArgs = { inherit nixos-k8s; };
     };
 
     devShells = nixos-k8s.devShells;
   };
 }
 ```
+
+Use `"${self}/hosts"` (string interpolation against the flake's own `self`) rather than `./hosts` when the consumer repo imports `nixos-k8s` as an input. Path coercion across flake boundaries can fail to resolve if the target dir isn't tracked in git; `self` gives you the realized store path.
 
 Your private repo structure:
 
@@ -527,6 +536,90 @@ Use `createHelmRelease` to add a new Helm chart. One function call generates the
 
    make deploy NODE=server1
    ```
+
+## Extension points
+
+When consuming `nixos-k8s` as a flake input, you extend the base cluster through two mechanisms: `mkCluster` arguments and NixOS module options.
+
+### `mkCluster` arguments
+
+| Argument | Type | Purpose |
+|----------|------|---------|
+| `clusterConfig` | attrset | Your `config.nix` (nodes, domain, services toggles, ...) |
+| `hostsPath` | path or string | Directory containing `<nodeName>/default.nix` for each node |
+| `secretsPath` | path | Directory with `.age` files and `secrets.nix` |
+| `extraModules` | list of modules | Extra NixOS modules loaded on every node (your own `modules/core`, `modules/kubernetes`, etc.) |
+| `extraSpecialArgs` | attrset | Extra values merged into `specialArgs` (e.g. pass your own flake inputs into modules) |
+
+Every module (base and extra) receives `serverConfig`, `nodeConfig`, `clusterNodes`, `secretsPath`, and `inputs` via `specialArgs`, plus anything you add through `extraSpecialArgs`.
+
+### NixOS options exposed by the base
+
+These options let you tweak the base without forking it:
+
+**`k8s.users`** (`modules/core/users.nix`)
+
+```nix
+k8s.users = {
+  kubectlSetenv = true;   # adds SETENV to the sudo kubectl rule (preserves KUBECONFIG env)
+  extraSudoCommands = [   # appended to the wheel sudo rule
+    { command = "/run/current-system/sw/bin/systemctl restart my-svc.service"; options = [ "NOPASSWD" ]; }
+  ];
+};
+```
+
+If `secrets/admin-password-hash.age` is not present, the module skips `hashedPasswordFile` and sudo rules (makes the admin hash strictly optional for downstream use).
+
+**`k8s.storage.nfs`** (`modules/kubernetes/infrastructure/nfs-storage.nix`)
+
+```nix
+k8s.storage.nfs = {
+  namespace = "media";                  # namespace that owns the shared PVC
+  pvcName = "shared-data";              # PVC name; PV is <pvcName>-pv
+  localDataPath = "/var/lib/media";     # host path when storage.useNFS = false
+  directoryLayout = [                   # subdirs created before binding the PVC
+    "torrents/movies" "torrents/tv"
+    "media/movies" "media/tv"
+    "backups"
+  ];
+  extraMountUnits = [ "mnt-nas2.mount" ]; # extra NFS mounts to wait for (useNFS only)
+};
+```
+
+Use this when you want the shared PVC in a specific namespace, with a project-specific folder layout, or to gate on extra NAS mounts.
+
+**`k8s.cleanup.serviceMap`** (`modules/kubernetes/infrastructure/cleanup.nix`)
+
+```nix
+k8s.cleanup.serviceMap.my-service = {
+  namespaces = [ "my-service" ];          # informational
+  markers = [ "my-service-setup-done" ];  # basenames under /var/lib removed on disable
+  extraCleanup = ''
+    $KUBECTL delete middleware -n traefik-system my-service-auth --ignore-not-found
+  '';
+};
+```
+
+When `serverConfig.services.my-service = false`, the `k8s-cleanup` service removes the marker files and runs `extraCleanup`. K8s resources themselves are scaled down (not deleted) to preserve PVCs.
+
+### Example: minimal consumer flake
+
+```nix
+{
+  inputs.nixos-k8s.url = "github:your-user/nixos-k8s";
+
+  outputs = { self, nixos-k8s, ... }: {
+    nixosConfigurations = nixos-k8s.lib.mkCluster {
+      clusterConfig = import ./config.nix;
+      hostsPath = "${self}/hosts";
+      secretsPath = ./secrets;
+      extraModules = [ ./modules/my-services.nix ];
+    };
+  };
+}
+```
+
+Where `./modules/my-services.nix` is a regular NixOS module that can read `serverConfig`, set `k8s.storage.nfs.directoryLayout`, append to `k8s.cleanup.serviceMap`, and define its own systemd services ordered against the `k3s-*.target` tiers.
 
 ## Boot sequence
 
