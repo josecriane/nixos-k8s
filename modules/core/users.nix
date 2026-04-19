@@ -8,7 +8,12 @@
 }:
 
 let
-  adminPasswordFile = "${secretsPath}/admin-password-hash.age";
+  # Use path-arithmetic (+) instead of "${secretsPath}/..." interpolation.
+  # String interpolation forces the path to be realized in the nix store at
+  # eval time, which fails when consumers pass a relative path (./secrets)
+  # from a different flake. Path arithmetic keeps the path as-is so that
+  # builtins.pathExists can check it in the actual filesystem.
+  adminPasswordFile = secretsPath + "/admin-password-hash.age";
   hasAdminPassword = builtins.pathExists adminPasswordFile;
   cfg = config.k8s.users;
 
@@ -16,10 +21,22 @@ let
   # journalctl, marker cleanup, and kubectl (with SETENV when requested).
   systemctlRoot = "/run/current-system/sw/bin/systemctl";
   setupCommands = [
-    { command = "${systemctlRoot} status *-setup.service"; options = [ "NOPASSWD" ]; }
-    { command = "${systemctlRoot} restart *-setup.service"; options = [ "NOPASSWD" ]; }
-    { command = "${systemctlRoot} start *-setup.service"; options = [ "NOPASSWD" ]; }
-    { command = "${systemctlRoot} stop *-setup.service"; options = [ "NOPASSWD" ]; }
+    {
+      command = "${systemctlRoot} status *-setup.service";
+      options = [ "NOPASSWD" ];
+    }
+    {
+      command = "${systemctlRoot} restart *-setup.service";
+      options = [ "NOPASSWD" ];
+    }
+    {
+      command = "${systemctlRoot} start *-setup.service";
+      options = [ "NOPASSWD" ];
+    }
+    {
+      command = "${systemctlRoot} stop *-setup.service";
+      options = [ "NOPASSWD" ];
+    }
   ];
 
   kubectlCommand = {
@@ -37,7 +54,11 @@ let
     options = [ "NOPASSWD" ];
   };
 
-  baseSudoCommands = setupCommands ++ [ journalctlCommand markerCommand kubectlCommand ];
+  baseSudoCommands = setupCommands ++ [
+    journalctlCommand
+    markerCommand
+    kubectlCommand
+  ];
 in
 {
   options.k8s.users = {

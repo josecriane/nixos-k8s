@@ -55,7 +55,11 @@ in
     directoryLayout = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ "data" ];
-      example = [ "torrents/movies" "media/tv" "backups" ];
+      example = [
+        "torrents/movies"
+        "media/tv"
+        "backups"
+      ];
       description = "Subdirectories (relative to the data root) created before binding the PVC.";
     };
 

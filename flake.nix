@@ -63,7 +63,8 @@
                   clusterNodes
                   ;
                 serverConfig = clusterConfig;
-              } // extraSpecialArgs;
+              }
+              // extraSpecialArgs;
               modules = [
                 disko.nixosModules.disko
                 agenix.nixosModules.default
@@ -71,7 +72,8 @@
                 "${self}/modules/core"
                 "${self}/modules/services"
                 "${self}/modules/kubernetes"
-              ] ++ extraModules;
+              ]
+              ++ extraModules;
             };
         in
         builtins.mapAttrs (name: _: mkHost name) nodes;
