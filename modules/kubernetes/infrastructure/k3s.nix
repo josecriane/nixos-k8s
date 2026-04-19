@@ -19,6 +19,7 @@ let
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
   useCalico = cni == "calico";
+  kubeconfigPath = "/etc/rancher/k3s/k3s.yaml";
 in
 {
   # K3s token (shared across all nodes via agenix)
@@ -83,9 +84,9 @@ in
     wants = [ "network-online.target" ];
     requires = [ "k3s-network-check.service" ];
     serviceConfig = {
-      LimitNOFILE = "infinity";
-      LimitNOFILESoft = "infinity";
-      LimitNPROC = "infinity";
+      LimitNOFILE = lib.mkForce "infinity";
+      LimitNOFILESoft = lib.mkForce "infinity";
+      LimitNPROC = lib.mkForce "infinity";
     };
   };
 

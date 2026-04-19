@@ -47,6 +47,7 @@ in
   ++ lib.optionals isBootstrap [
     ./infrastructure/metallb.nix
     ./infrastructure/traefik.nix
+    ./infrastructure/traefik-dashboard.nix
     ./infrastructure/tls-secret.nix
     ./infrastructure/nfs-storage.nix
     ./infrastructure/cleanup.nix

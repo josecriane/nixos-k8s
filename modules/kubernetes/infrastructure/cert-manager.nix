@@ -65,24 +65,35 @@ in
         AGE="${pkgs.age}/bin/age"
         AGE_KEY="/etc/ssh/ssh_host_ed25519_key"
 
-        # Try to recover backup from NAS at startup
+        # Try to recover backup from NAS at startup. Non-fatal: if NAS is down
+        # or has stale handles, we fall through to ACME issuance.
         if [ "$RESTORE_FROM_BACKUP" = "true" ] && [ "$NAS_ENABLED" = "true" ]; then
           echo "Looking for certificate backup on NAS..."
           NAS_BACKUP_ENCRYPTED="$NAS_BACKUP_DIR/$SECRET_NAME.yaml.age"
           NAS_BACKUP_PLAIN="$NAS_BACKUP_DIR/$SECRET_NAME.yaml"
+          set +e
           if [ -f "$NAS_BACKUP_ENCRYPTED" ]; then
             echo "Encrypted backup found on NAS, decrypting to local..."
-            $AGE -d -i "$AGE_KEY" -o "$CERT_BACKUP_DIR/$SECRET_NAME.yaml" "$NAS_BACKUP_ENCRYPTED"
-            chmod 600 "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
-            echo "Backup decrypted from NAS"
+            if $AGE -d -i "$AGE_KEY" -o "$CERT_BACKUP_DIR/$SECRET_NAME.yaml" "$NAS_BACKUP_ENCRYPTED"; then
+              chmod 600 "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
+              echo "Backup decrypted from NAS"
+            else
+              echo "WARN: NAS backup decrypt failed, continuing without"
+              rm -f "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
+            fi
           elif [ -f "$NAS_BACKUP_PLAIN" ]; then
             echo "Unencrypted backup found on NAS, copying to local..."
-            cp "$NAS_BACKUP_PLAIN" "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
-            chmod 600 "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
-            echo "Backup copied from NAS (consider re-encrypting)"
+            if cp "$NAS_BACKUP_PLAIN" "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"; then
+              chmod 600 "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
+              echo "Backup copied from NAS (consider re-encrypting)"
+            else
+              echo "WARN: NAS backup copy failed, continuing without"
+              rm -f "$CERT_BACKUP_DIR/$SECRET_NAME.yaml"
+            fi
           else
             echo "No backup on NAS"
           fi
+          set -e
         fi
 
         wait_for_k3s
@@ -165,11 +176,16 @@ in
           echo "Local backup saved at $BACKUP_FILE"
 
           if [ "$NAS_ENABLED" = "true" ]; then
-            mkdir -p "$NAS_BACKUP_DIR"
-            # Encrypt before writing to NAS (protect TLS private key)
-            $AGE -R "$AGE_KEY".pub -o "$NAS_BACKUP_DIR/$SECRET_NAME.yaml.age" "$BACKUP_FILE"
-            chmod 600 "$NAS_BACKUP_DIR/$SECRET_NAME.yaml.age"
-            echo "Encrypted backup saved to NAS: $NAS_BACKUP_DIR/$SECRET_NAME.yaml.age"
+            # Non-fatal: NAS may be down or have stale handles
+            set +e
+            mkdir -p "$NAS_BACKUP_DIR" 2>/dev/null
+            if $AGE -R "$AGE_KEY".pub -o "$NAS_BACKUP_DIR/$SECRET_NAME.yaml.age" "$BACKUP_FILE" 2>&1; then
+              chmod 600 "$NAS_BACKUP_DIR/$SECRET_NAME.yaml.age"
+              echo "Encrypted backup saved to NAS: $NAS_BACKUP_DIR/$SECRET_NAME.yaml.age"
+            else
+              echo "WARN: NAS backup save failed, continuing (local backup still saved)"
+            fi
+            set -e
           fi
         }
 
@@ -273,10 +289,26 @@ in
           save_backup
         fi
 
+        # Default TLSStore so IngressRoutes without explicit tls.secretName use
+        # the wildcard cert via tls.store. Avoids copying the secret into every
+        # namespace. Mirrors the pattern in tls-secret.nix (manual provider).
+        echo "Creating default TLSStore..."
+        cat <<TLSSTOREEOF | $KUBECTL apply -f -
+        apiVersion: traefik.io/v1alpha1
+        kind: TLSStore
+        metadata:
+          name: default
+          namespace: traefik-system
+        spec:
+          defaultCertificate:
+            secretName: $SECRET_NAME
+        TLSSTOREEOF
+
         print_success "cert-manager" \
           "ClusterIssuer: letsencrypt-prod" \
           "Wildcard certificate: *.${serverConfig.subdomain}.${serverConfig.domain}" \
           "Secret: $SECRET_NAME" \
+          "Default TLSStore: traefik-system/default" \
           "Status: $FINAL_STATUS ($([ "$CERT_RESTORED" = "true" ] && echo "from backup" || echo "ACME"))"
 
         create_marker "${markerFile}"

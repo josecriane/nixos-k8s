@@ -102,4 +102,41 @@ in
       ) { } nasCfg.mediaPaths
     ) { } secondaryNasList
   );
+
+  # Auto-heal stale NFS handles: NAS reboots leave cached file handles invalid
+  # on the client side, surfacing as "Stale file handle" on stat/mkdir. A periodic
+  # check stats each NFS mount with a short timeout and restarts its mount unit
+  # on failure. Only enabled when NFS storage is in use.
+  systemd.services.nfs-heal = lib.mkIf useNFS {
+    description = "Detect and heal stale NFS mounts";
+    serviceConfig = {
+      Type = "oneshot";
+    };
+    path = [
+      pkgs.util-linux
+      pkgs.coreutils
+      pkgs.systemd
+    ];
+    script = ''
+      set -u
+      findmnt -l -t nfs,nfs4 -n -o TARGET | while read -r target; do
+        case "$target" in /mnt/*) ;; *) continue ;; esac
+        if ! timeout 3 stat "$target" >/dev/null 2>&1; then
+          unit=$(systemd-escape --path --suffix=mount "$target")
+          echo "Stale NFS mount: $target, restarting $unit"
+          systemctl restart "$unit" || echo "  failed to restart $unit"
+        fi
+      done
+    '';
+  };
+
+  systemd.timers.nfs-heal = lib.mkIf useNFS {
+    description = "Periodic NFS stale-handle healing";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "5m";
+      OnUnitActiveSec = "5m";
+      AccuracySec = "30s";
+    };
+  };
 }
