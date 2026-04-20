@@ -94,6 +94,26 @@
         else
           { };
 
+      apps.${system} =
+        let
+          mkScriptApp = name: path: {
+            type = "app";
+            program = toString (
+              pkgs.writeShellScript "nixos-k8s-${name}" ''
+                export PROJECT_DIR="''${PROJECT_DIR:-$PWD}"
+                exec ${path} "$@"
+              ''
+            );
+          };
+        in
+        {
+          install = mkScriptApp "install" "${self}/scripts/install.sh";
+          unlock = mkScriptApp "unlock" "${self}/scripts/unlock.sh";
+          enroll-tpm = mkScriptApp "enroll-tpm" "${self}/scripts/enroll-tpm.sh";
+          setup = mkScriptApp "setup" "${self}/scripts/setup.sh";
+          add-node = mkScriptApp "add-node" "${self}/scripts/add-node.sh";
+        };
+
       formatter.${system} = pkgs.nixfmt-tree;
 
       devShells.${system}.default = pkgs.mkShell {

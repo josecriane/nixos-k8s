@@ -11,7 +11,7 @@ node-ip = $(shell $(NIX_EVAL) --expr '(import ./config.nix).nodes.$(1).ip')
 # Get the bootstrap node name
 bootstrap-node = $(shell $(NIX_EVAL) --expr 'let c = import ./config.nix; in builtins.head (builtins.filter (n: c.nodes.$${n}.bootstrap or false) (builtins.attrNames c.nodes))')
 
-.PHONY: help setup install deploy deploy-all bootstrap ssh unlock enroll-tpm status logs shell fmt check clean reinstall
+.PHONY: help setup add-node install deploy deploy-all bootstrap ssh unlock enroll-tpm status logs shell fmt check clean reinstall
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -19,6 +19,9 @@ help: ## Show this help
 
 setup: ## Run interactive setup wizard
 	@./scripts/setup.sh
+
+add-node: config.nix ## Add a new node: make add-node [NAME=x] [IP=x.x.x.x] [ROLE=agent]
+	@./scripts/add-node.sh $(NAME) $(IP) $(ROLE)
 
 install: config.nix ## Install a node: make install NODE=server1 [IP=x.x.x.x]
 	@[ -n "$(NODE)" ] || { echo "Usage: make install NODE=<name> [IP=<live-usb-ip>]"; exit 1; }
