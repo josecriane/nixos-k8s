@@ -130,8 +130,8 @@ if [[ ! -f "$SERVER_KEY_DIR/ssh_host_ed25519_key" ]]; then
   if ! grep -q "^  ${NODE} " "$SECRETS_NIX" 2>/dev/null; then
     echo -e "${YELLOW}Adding ${NODE} host key to secrets/secrets.nix...${NC}"
 
-    # Add the node variable and include it in allHosts
-    sed -i "s|# Nomasystems agenix|${NODE} = \"${NODE_PUB_KEY}\";\n\n  # Nomasystems agenix|" "$SECRETS_NIX"
+    # Insert the node key before the `admin =` line (library convention).
+    sed -i "s|^  admin = |  ${NODE} = \"${NODE_PUB_KEY}\";\n\n  admin = |" "$SECRETS_NIX"
 
     # Update allHosts to include the new node
     if grep -q 'allHosts = \[\];' "$SECRETS_NIX"; then
