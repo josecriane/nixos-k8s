@@ -112,59 +112,74 @@ echo ""
 echo -e "${BLUE}=== Step 2: Installing NixOS with nixos-anywhere ===${NC}"
 echo ""
 
-# Generate SSH host keys for this node (needed for agenix + initrd SSH)
+# Generate SSH host keys for this node (needed for agenix + initrd SSH).
+# Private key is stored age-encrypted (admin-only) under secrets/server-keys/<node>/.
 SERVER_KEY_DIR="$PROJECT_DIR/secrets/server-keys/${NODE}"
 SECRETS_NIX="$PROJECT_DIR/secrets/secrets.nix"
+HOST_KEY_AGE="$SERVER_KEY_DIR/ssh_host_ed25519_key.age"
+HOST_KEY_PUB="$SERVER_KEY_DIR/ssh_host_ed25519_key.pub"
 AGENIX_IDENTITY=$(grep 'agenixIdentity' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/' | sed "s|~|$HOME|" | head -1)
 AGENIX_IDENTITY="${AGENIX_IDENTITY:-$HOME/.ssh/agenix}"
 
-if [[ ! -f "$SERVER_KEY_DIR/ssh_host_ed25519_key" ]]; then
+if [[ ! -f "$AGENIX_IDENTITY" ]]; then
+  echo -e "${RED}Cannot find agenix identity at $AGENIX_IDENTITY${NC}"
+  echo "Set agenixIdentity in config.nix or ensure ~/.ssh/agenix exists."
+  exit 1
+fi
+
+if [[ ! -f "$HOST_KEY_AGE" ]]; then
   echo -e "${YELLOW}Generating SSH host keys for ${NODE}...${NC}"
   mkdir -p "$SERVER_KEY_DIR"
-  ssh-keygen -t ed25519 -f "$SERVER_KEY_DIR/ssh_host_ed25519_key" -N "" -C "root@${NODE}"
-  echo -e "${GREEN}Host key generated${NC}"
 
-  # Add host key to secrets.nix and re-encrypt
-  NODE_PUB_KEY=$(cat "$SERVER_KEY_DIR/ssh_host_ed25519_key.pub" | awk '{print $1 " " $2}')
+  # Generate in a temp location and encrypt immediately — never write plaintext to the repo.
+  TMP_KEYDIR=$(mktemp -d)
+  ssh-keygen -t ed25519 -f "$TMP_KEYDIR/ssh_host_ed25519_key" -N "" -C "root@${NODE}" >/dev/null
+  cp "$TMP_KEYDIR/ssh_host_ed25519_key.pub" "$HOST_KEY_PUB"
+
+  NODE_PUB_KEY=$(awk '{print $1 " " $2}' "$HOST_KEY_PUB")
 
   if ! grep -q "^  ${NODE} " "$SECRETS_NIX" 2>/dev/null; then
     echo -e "${YELLOW}Adding ${NODE} host key to secrets/secrets.nix...${NC}"
-
-    # Insert the node key before the `admin =` line (library convention).
     sed -i "s|^  admin = |  ${NODE} = \"${NODE_PUB_KEY}\";\n\n  admin = |" "$SECRETS_NIX"
-
-    # Update allHosts to include the new node
     if grep -q 'allHosts = \[\];' "$SECRETS_NIX"; then
       sed -i "s|allHosts = \[\];|allHosts = [ ${NODE} ];|" "$SECRETS_NIX"
     elif grep -q 'allHosts = \[' "$SECRETS_NIX"; then
       sed -i "s|allHosts = \[|allHosts = [ ${NODE} |" "$SECRETS_NIX"
     fi
-
-    # Add node to github-pat publicKeys (bootstrap server needs it)
     sed -i "s|\"github-pat.age\".publicKeys = \[ admin \];|\"github-pat.age\".publicKeys = [ admin ${NODE} ];|" "$SECRETS_NIX"
-
-    echo -e "${GREEN}secrets.nix updated${NC}"
   fi
 
-  # Re-encrypt all secrets so the new node can decrypt them
-  if [[ -f "$AGENIX_IDENTITY" ]]; then
-    echo -e "${YELLOW}Re-encrypting secrets for ${NODE}...${NC}"
+  # Register the new server-key entry so agenix knows its recipients.
+  if ! grep -q "\"server-keys/${NODE}/ssh_host_ed25519_key.age\"" "$SECRETS_NIX"; then
+    SERVER_KEY_RULE="  \"server-keys/${NODE}/ssh_host_ed25519_key.age\".publicKeys = [ admin ];"
+    if grep -q '^}$' "$SECRETS_NIX"; then
+      sed -i "\$i\\$SERVER_KEY_RULE" "$SECRETS_NIX"
+    fi
+  fi
+
+  echo -e "${YELLOW}Encrypting ${NODE} host key...${NC}"
+  (
     cd "$PROJECT_DIR/secrets"
-    agenix -r -i "$AGENIX_IDENTITY"
-    cd "$PROJECT_DIR"
-    echo -e "${GREEN}Secrets re-encrypted${NC}"
-  else
-    echo -e "${RED}WARNING: Cannot find $AGENIX_IDENTITY to re-encrypt secrets${NC}"
-    echo "Run manually: cd secrets && agenix -r -i <your-identity-key>"
-  fi
+    cat "$TMP_KEYDIR/ssh_host_ed25519_key" | EDITOR="cp /dev/stdin" \
+      agenix -e "server-keys/${NODE}/ssh_host_ed25519_key.age" -i "$AGENIX_IDENTITY"
+  )
+  echo -e "${GREEN}Host key generated and encrypted${NC}"
+
+  # Re-encrypt other secrets so the new node's host key is a recipient.
+  echo -e "${YELLOW}Re-encrypting secrets for ${NODE}...${NC}"
+  (cd "$PROJECT_DIR/secrets" && agenix -r -i "$AGENIX_IDENTITY")
+  echo -e "${GREEN}Secrets re-encrypted${NC}"
+
+  rm -rf "$TMP_KEYDIR"
   echo ""
 fi
 
-# Prepare extra-files with SSH host keys
+# Prepare extra-files with SSH host keys (decrypted to a tempdir, wiped after nixos-anywhere).
 EXTRA_FILES=$(mktemp -d)
+trap 'rm -rf "$EXTRA_FILES"' EXIT
 mkdir -p "$EXTRA_FILES/etc/ssh"
-cp "$SERVER_KEY_DIR/ssh_host_ed25519_key" "$EXTRA_FILES/etc/ssh/"
-cp "$SERVER_KEY_DIR/ssh_host_ed25519_key.pub" "$EXTRA_FILES/etc/ssh/"
+age -d -i "$AGENIX_IDENTITY" "$HOST_KEY_AGE" > "$EXTRA_FILES/etc/ssh/ssh_host_ed25519_key"
+cp "$HOST_KEY_PUB" "$EXTRA_FILES/etc/ssh/ssh_host_ed25519_key.pub"
 chmod 600 "$EXTRA_FILES/etc/ssh/ssh_host_ed25519_key"
 
 # Stage host files so the flake can see them (unstaged after install)
