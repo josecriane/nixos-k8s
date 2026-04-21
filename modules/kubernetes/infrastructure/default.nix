@@ -13,6 +13,8 @@ let
   cni = k8sCfg.cni or "flannel";
 
   certProvider = serverConfig.certificates.provider or "acme";
+
+  longhornEnabled = serverConfig.storage.longhorn.enable or false;
 in
 {
   imports = [
@@ -48,5 +50,10 @@ in
   # cert-manager (acme only)
   ++ lib.optionals (isBootstrap && certProvider == "acme") [
     ./cert-manager
+  ]
+  # Longhorn distributed block storage (host prereqs on every node,
+  # Helm release on bootstrap only — guarded inside the module)
+  ++ lib.optionals longhornEnabled [
+    ./longhorn
   ];
 }

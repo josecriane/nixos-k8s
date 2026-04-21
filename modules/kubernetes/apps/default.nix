@@ -21,9 +21,5 @@ in
     ]
     ++ lib.optionals (onBootstrap "github-runners") [
       ./github-runners
-    ]
-    # service-manager runs on every node (image-import); gated only by toggle.
-    ++ lib.optionals (enabled "service-manager") [
-      ./service-manager
     ];
 }

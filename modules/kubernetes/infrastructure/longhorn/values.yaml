@@ -1,0 +1,27 @@
+defaultSettings:
+  defaultReplicaCount: __DEFAULT_REPLICA_COUNT__
+  defaultDataPath: /var/lib/longhorn
+  replicaAutoBalance: best-effort
+  storageMinimalAvailablePercentage: "10"
+  upgradeChecker: false
+
+persistence:
+  defaultClass: __DEFAULT_CLASS__
+  defaultClassReplicaCount: __DEFAULT_REPLICA_COUNT__
+  reclaimPolicy: Delete
+
+longhornManager:
+  priorityClass: system-cluster-critical
+
+longhornDriver:
+  priorityClass: system-cluster-critical
+
+longhornUI:
+  replicas: 1
+
+ingress:
+  enabled: false
+
+service:
+  ui:
+    type: ClusterIP
