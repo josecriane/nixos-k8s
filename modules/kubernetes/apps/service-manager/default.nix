@@ -108,38 +108,40 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "service-manager-setup" ''
-                  ${k8s.libShSource}
-                  IMAGE_HASH="${image}"
-                  setup_preamble_hash "${markerFile}" "Service Manager" "$IMAGE_HASH"
+          ${k8s.libShSource}
+          IMAGE_HASH="${image}"
+          setup_preamble_hash "${markerFile}" "Service Manager" "$IMAGE_HASH"
 
-                  wait_for_k3s
-                  wait_for_traefik
-                  wait_for_certificate
-                  ensure_namespace "${ns}"
+          wait_for_k3s
+          wait_for_traefik
+          wait_for_certificate
+          ensure_namespace "${ns}"
 
-                  # ConfigMap carries dynamic services.json, keep inline.
-                  $KUBECTL create configmap service-manager-config -n ${ns} \
-                    --from-literal=services.json='${configJson}' \
-                    --dry-run=client -o yaml | $KUBECTL apply -f -
+          # ConfigMap carries dynamic services.json, keep inline.
+          $KUBECTL create configmap service-manager-config -n ${ns} \
+            --from-literal=services.json='${configJson}' \
+            --dry-run=client -o yaml | $KUBECTL apply -f -
 
-                  ${k8s.applyManifestsScript {
-                    name = "service-manager";
-                    manifests = [ ./manifests.yaml ];
-                    substitutions = { NAMESPACE = ns; };
-                  }}
+          ${k8s.applyManifestsScript {
+            name = "service-manager";
+            manifests = [ ./manifests.yaml ];
+            substitutions = {
+              NAMESPACE = ns;
+            };
+          }}
 
-                  wait_for_deployment "${ns}" "service-manager" 120
+          wait_for_deployment "${ns}" "service-manager" 120
 
-                  echo "Rolling out service-manager to pick up new image..."
-                  $KUBECTL rollout restart deployment/service-manager -n ${ns}
-                  $KUBECTL rollout status deployment/service-manager -n ${ns} --timeout=120s
+          echo "Rolling out service-manager to pick up new image..."
+          $KUBECTL rollout restart deployment/service-manager -n ${ns}
+          $KUBECTL rollout status deployment/service-manager -n ${ns} --timeout=120s
 
-                  create_ingress_route "service-manager" "${ns}" "$(hostname ${cfg.hostname})" "service-manager" "8080"
+          create_ingress_route "service-manager" "${ns}" "$(hostname ${cfg.hostname})" "service-manager" "8080"
 
-                  print_success "Service Manager" \
-                    "URL: https://$(hostname ${cfg.hostname})"
+          print_success "Service Manager" \
+            "URL: https://$(hostname ${cfg.hostname})"
 
-                  create_marker "${markerFile}" "$IMAGE_HASH"
+          create_marker "${markerFile}" "$IMAGE_HASH"
         '';
       };
     };

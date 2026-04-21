@@ -71,7 +71,9 @@ lib.mkIf isManual {
         ${k8s.applyManifestsScript {
           name = "tls-secret";
           manifests = [ ./manifests.yaml ];
-          substitutions = { CERT_SECRET = certSecret; };
+          substitutions = {
+            CERT_SECRET = certSecret;
+          };
         }}
 
         print_success "TLS certificate" \

@@ -89,12 +89,14 @@ let
     ];
   };
 in
-lib.recursiveUpdate {
-  age.secrets.registry-htpasswd = {
-    file = "${secretsPath}/registry-htpasswd.age";
-  };
+lib.recursiveUpdate
+  {
+    age.secrets.registry-htpasswd = {
+      file = "${secretsPath}/registry-htpasswd.age";
+    };
 
-  systemd.services = registry.systemd.services // ui.systemd.services;
-} {
-  systemd.services.docker-registry-setup.serviceConfig.ExecStartPre = "${preHelm}";
-}
+    systemd.services = registry.systemd.services // ui.systemd.services;
+  }
+  {
+    systemd.services.docker-registry-setup.serviceConfig.ExecStartPre = "${preHelm}";
+  }

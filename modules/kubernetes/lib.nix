@@ -214,8 +214,7 @@ rec {
         else
           "";
 
-      valuesFlagArg =
-        if values != { } || renderedValuesFile != null then "-f \"$VALUES_FILE\"" else "";
+      valuesFlagArg = if values != { } || renderedValuesFile != null then "-f \"$VALUES_FILE\"" else "";
 
       cleanupValues = if values != { } then ''rm -f "$VALUES_FILE"'' else "";
 
