@@ -1,0 +1,117 @@
+githubConfigUrl: __GITHUB_CONFIG_URL__
+githubConfigSecret: github-secret
+maxRunners: __MAX_RUNNERS__
+minRunners: 0
+runnerScaleSetName: __RUNNER_NAME__
+controllerServiceAccount:
+  name: arc-gha-rs-controller
+  namespace: arc-systems
+template:
+  spec:
+    hostAliases: __HOST_ALIASES__
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command:
+          - /home/runner/run.sh
+        env:
+          - name: DOCKER_HOST
+            value: unix:///var/run/docker.sock
+          - name: DOCKER_API_VERSION
+            value: "1.43"
+          - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
+            value: "120"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 6Gi
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: docker-conf-rw
+            mountPath: /home/runner/.docker
+      - name: dind
+        image: docker:24-dind
+        args:
+          - dockerd
+          - --host=unix:///var/run/docker.sock
+          - --group=$(DOCKER_GROUP_GID)
+        env:
+          - name: DOCKER_GROUP_GID
+            value: "123"
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+          - name: daemon-json
+            mountPath: /etc/docker/daemon.json
+            readOnly: true
+            subPath: daemon.json
+          - name: dind-docker-conf
+            mountPath: /root/.docker
+    initContainers:
+      - name: init-dind-externals
+        image: ghcr.io/actions/actions-runner:latest
+        command:
+          - cp
+          - -r
+          - /home/runner/externals/.
+          - /home/runner/tmpDir/
+        volumeMounts:
+          - name: dind-externals
+            mountPath: /home/runner/tmpDir
+      - name: copy-docker-config
+        image: busybox:1.34.1
+        command:
+          - sh
+          - -c
+          - |
+            set -x
+            mkdir -p /home/runner/.docker
+            cp /docker-conf-ro/config.json /home/runner/.docker/config.json
+            chmod 644 /home/runner/.docker/config.json
+            mkdir -p /dind-docker-conf
+            cp /docker-conf-ro/config.json /dind-docker-conf/config.json
+            chmod 644 /dind-docker-conf/config.json
+        volumeMounts:
+          - name: docker-conf-rw
+            mountPath: /home/runner/.docker
+          - name: dind-docker-conf
+            mountPath: /dind-docker-conf
+          - name: mirror-registry
+            mountPath: /docker-conf-ro/config.json
+            subPath: .dockerconfigjson
+    volumes:
+      - name: work
+        emptyDir: {}
+      - name: dind-sock
+        emptyDir: {}
+      - name: dind-externals
+        emptyDir: {}
+      - name: docker-conf-rw
+        emptyDir: {}
+      - name: dind-docker-conf
+        emptyDir: {}
+      - name: mirror-registry
+        secret:
+          secretName: mirror-registry-secret
+      - name: daemon-json
+        configMap:
+          name: docker-daemon-config

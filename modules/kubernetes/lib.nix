@@ -74,6 +74,61 @@ rec {
   #   }
   #
   # Returns an attrset with: { systemd.services.<name>-setup = ...; }
+  # Render a values YAML file with token substitution.
+  # Auto-populates __TIMEZONE__, __PUID__, __PGID__, __DOMAIN__, __SUBDOMAIN__
+  # from serverConfig. Caller-provided `extra` attrset adds/overrides tokens
+  # (e.g. { IMAGE_TAG = "v1.2.3"; }) and is referenced as __IMAGE_TAG__ in the
+  # YAML. Values that are not strings are passed through `toString`.
+  renderValues =
+    name: yamlFile: extra:
+    let
+      common = {
+        TIMEZONE = serverConfig.timezone or "UTC";
+        PUID = toString (serverConfig.puid or 1000);
+        PGID = toString (serverConfig.pgid or 1000);
+        DOMAIN = domain;
+        SUBDOMAIN = subdomain;
+      };
+      all = common // extra;
+      keys = builtins.attrNames all;
+      substituted = builtins.replaceStrings (map (k: "__${k}__") keys) (map (k: toString all.${k}) keys) (
+        builtins.readFile yamlFile
+      );
+      raw = pkgs.writeText "${name}-values.raw.yaml" substituted;
+    in
+    # Token substitution can leave weird indentation (empty lines, mismatched
+    # columns if the token was inserted mid-block). Reformat with yq so the
+    # output is always canonical multi-doc YAML, regardless of how the caller
+    # shaped the substitution string.
+    pkgs.runCommand "${name}-values.yaml" { nativeBuildInputs = [ pkgs.yq-go ]; } ''
+      yq -P ${raw} > $out
+    '';
+
+  # Alias: renderValues applies to any templated YAML, not only Helm values.
+  renderManifest = renderValues;
+
+  # Emit a bash snippet that applies one or more YAML manifests via
+  # `kubectl apply -f`. Each manifest is token-substituted (same tokens as
+  # createHelmRelease: auto TIMEZONE/PUID/PGID/DOMAIN/SUBDOMAIN plus caller
+  # substitutions). Use this in raw systemd services that don't go through
+  # createHelmRelease but still want static YAML kept in its own file.
+  applyManifestsScript =
+    {
+      name,
+      manifests,
+      substitutions ? { },
+    }:
+    let
+      rendered = pkgs.lib.imap0 (
+        i: m: renderManifest "${name}-manifest-${toString i}" m substitutions
+      ) manifests;
+      args = builtins.concatStringsSep " " (map (m: "-f ${m}") rendered);
+    in
+    pkgs.lib.optionalString (manifests != [ ]) ''
+      echo "Applying manifests for ${name}..."
+      $KUBECTL apply ${args}
+    '';
+
   createHelmRelease =
     {
       name,
@@ -85,6 +140,15 @@ rec {
       timeout ? "10m",
       values ? { },
       valuesFile ? null,
+      # Token substitutions applied to valuesFile and manifests. Common tokens
+      # (TIMEZONE, PUID, PGID, DOMAIN, SUBDOMAIN) are always auto-populated
+      # from serverConfig; this attrset adds/overrides more.
+      substitutions ? { },
+      # Extra YAML manifests to apply after helm install. Each file is
+      # token-substituted (same tokens as valuesFile) and applied with
+      # `kubectl apply -f`. Runs after PSS labeling and waitFor, before
+      # ingressScript/extraScript.
+      manifests ? [ ],
       sets ? [ ],
       ingress ? null,
       middlewares ? [ ],
@@ -112,6 +176,10 @@ rec {
       valuesJson = builtins.toJSON values;
       valuesFileNix = pkgs.writeText "${name}-values.json" valuesJson;
 
+      # Render valuesFile (if provided) with common tokens + caller substitutions.
+      renderedValuesFile =
+        if valuesFile != null then renderValues name valuesFile substitutions else null;
+
       # Config hash: changes when chart, version, values, sets, or ingress change
       configHashInput = builtins.toJSON {
         inherit
@@ -119,7 +187,10 @@ rec {
           version
           values
           sets
+          substitutions
           ;
+        valuesFile' = if valuesFile != null then builtins.readFile valuesFile else null;
+        manifests' = map (m: builtins.readFile m) manifests;
         ingress' = if ingress != null then ingress else null;
         extra = builtins.hashString "sha256" extraScript;
       };
@@ -138,12 +209,13 @@ rec {
             VALUES_FILE=$(mktemp /tmp/${name}-values-XXXXXX.yaml)
             $YQ -P '.' ${valuesFileNix} > "$VALUES_FILE"
           ''
-        else if valuesFile != null then
-          ''VALUES_FILE="${valuesFile}"''
+        else if renderedValuesFile != null then
+          ''VALUES_FILE="${renderedValuesFile}"''
         else
           "";
 
-      valuesFlagArg = if values != { } || valuesFile != null then "-f \"$VALUES_FILE\"" else "";
+      valuesFlagArg =
+        if values != { } || renderedValuesFile != null then "-f \"$VALUES_FILE\"" else "";
 
       cleanupValues = if values != { } then ''rm -f "$VALUES_FILE"'' else "";
 
@@ -165,6 +237,8 @@ rec {
 
       waitScript =
         if waitFor != null then ''wait_for_deployment "${namespace}" "${waitFor}" 300'' else "";
+
+      manifestsScript = applyManifestsScript { inherit name manifests substitutions; };
 
     in
     {
@@ -221,6 +295,8 @@ rec {
               pod-security.kubernetes.io/audit="${pssLevel}"
 
             ${waitScript}
+
+            ${manifestsScript}
 
             ${ingressScript}
 

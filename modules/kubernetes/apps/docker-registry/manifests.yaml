@@ -1,0 +1,42 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: registry-auth
+  namespace: container-registry
+spec:
+  basicAuth:
+    secret: registry-htpasswd
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: docker-registry
+  namespace: container-registry
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`registry.__SUBDOMAIN__.__DOMAIN__`) && (Method(`GET`) || Method(`HEAD`))
+      kind: Rule
+      priority: 100
+      middlewares:
+        - name: hsts-headers
+          namespace: traefik-system
+      services:
+        - name: docker-registry
+          port: 5000
+    - match: Host(`registry.__SUBDOMAIN__.__DOMAIN__`)
+      kind: Rule
+      priority: 50
+      middlewares:
+        - name: hsts-headers
+          namespace: traefik-system
+        - name: registry-auth
+          namespace: container-registry
+      services:
+        - name: docker-registry
+          port: 5000
+  tls:
+    store:
+      name: default
+      namespace: traefik-system

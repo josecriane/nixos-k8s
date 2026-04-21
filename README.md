@@ -340,23 +340,27 @@ nixos-k8s/
       lib.nix                        Nix helpers + createHelmRelease
       lib.sh                         Bash helpers
       systemd-targets.nix            Boot tier ordering
+      default.nix                    Kubernetes module orchestrator
       infrastructure/
+        default.nix                  Infrastructure orchestrator
         k3s.nix                      K3s engine (multi-node)
         kubeadm.nix                  kubeadm engine (NixOS services.kubernetes)
         cni-flannel.nix              Flannel CNI (for kubeadm)
-        cni-calico.nix               Calico CNI via Tigera (both engines)
-        metallb.nix                  L2 load balancer (bootstrap)
-        traefik.nix                  Ingress controller (bootstrap)
-        tls-secret.nix               TLS cert upload (manual provider)
-        cert-manager.nix             Wildcard certs (bootstrap, acme only)
+        calico/                      Calico CNI via Tigera (both engines)
+        metallb/                     L2 load balancer (bootstrap)
+        traefik/                     Ingress controller (bootstrap)
+        tls-secret/                  TLS cert upload (manual provider)
+        cert-manager/                Wildcard certs (bootstrap, acme only)
+        traefik-dashboard/           Traefik dashboard IngressRoute (opt-in)
         local-path-provisioner.nix   Storage provisioner (kubeadm only)
         nfs-mounts.nix               NFS mount declarations (all nodes)
         nfs-storage.nix              PV/PVC creation (bootstrap)
         cleanup.nix                  Cleanup disabled services (bootstrap)
       apps/
-        docker-registry.nix          Docker Registry + UI
-        docker-mirror.nix            Docker Hub pull-through cache
-        github-runners.nix           GitHub Actions self-hosted runners (DinD)
+        default.nix                  Apps orchestrator
+        docker-registry/             Docker Registry + UI
+        docker-mirror/               Docker Hub pull-through cache
+        github-runners/              GitHub Actions self-hosted runners (DinD)
   scripts/
     setup.sh                         Interactive config wizard
     install.sh                       Node installation with nixos-anywhere

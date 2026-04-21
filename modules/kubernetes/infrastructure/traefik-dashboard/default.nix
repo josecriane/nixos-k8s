@@ -10,7 +10,7 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
+  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/traefik-dashboard-setup-done";
 
   dashCfg = serverConfig.traefik.dashboard or { };
@@ -19,12 +19,12 @@ let
   middlewares = dashCfg.middlewares or [ ];
   extraAfter = dashCfg.extraAfter or [ ];
 
-  middlewaresYaml = lib.concatMapStringsSep "\n" (
-    m: "            - name: ${m.name}\n              namespace: ${m.namespace}"
-  ) middlewares;
-  middlewaresBlock = lib.optionalString (middlewares != [ ]) ''
-          middlewares:
-    ${middlewaresYaml}'';
+  middlewaresValue = lib.optionalString (middlewares != [ ]) (
+    "      middlewares:\n"
+    + lib.concatMapStringsSep "\n" (
+      m: "        - name: ${m.name}\n          namespace: ${m.namespace}"
+    ) middlewares
+  );
 in
 lib.mkIf dashEnable {
   systemd.services.traefik-dashboard-setup = {
@@ -45,27 +45,14 @@ lib.mkIf dashEnable {
         wait_for_traefik
         wait_for_certificate
 
-        cat <<EOF | $KUBECTL apply -f -
-        apiVersion: traefik.io/v1alpha1
-        kind: IngressRoute
-        metadata:
-          name: traefik-dashboard
-          namespace: traefik-system
-        spec:
-          entryPoints:
-            - websecure
-          routes:
-            - match: Host(\`${host}\`)
-              kind: Rule
-        ${middlewaresBlock}
-              services:
-                - kind: TraefikService
-                  name: api@internal
-          tls:
-            store:
-              name: default
-              namespace: traefik-system
-        EOF
+        ${k8s.applyManifestsScript {
+          name = "traefik-dashboard";
+          manifests = [ ./manifests.yaml ];
+          substitutions = {
+            HOST = host;
+            MIDDLEWARES = middlewaresValue;
+          };
+        }}
 
         print_success "Traefik dashboard" \
           "URL: https://${host}/dashboard/"

@@ -7,17 +7,15 @@
 # via: http://docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000
 #
 # This URL is used automatically by the DinD sidecar in GitHub runners
-# (see modules/kubernetes/apps/github-runners.nix).
+# (see modules/kubernetes/apps/github-runners).
 {
-  config,
-  lib,
   pkgs,
   serverConfig,
   ...
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
+  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
 in
 k8s.createHelmRelease {
   name = "docker-mirror";
@@ -29,14 +27,5 @@ k8s.createHelmRelease {
   chart = "docker-registry/docker-registry";
   version = "2.2.3";
   tier = "core";
-  values = {
-    proxy = {
-      enabled = true;
-      remoteurl = "https://registry-1.docker.io";
-    };
-    persistence = {
-      enabled = true;
-      size = "100Gi";
-    };
-  };
+  valuesFile = ./values.yaml;
 }

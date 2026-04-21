@@ -1,0 +1,2 @@
+ui:
+  dockerRegistryUrl: http://docker-registry:5000

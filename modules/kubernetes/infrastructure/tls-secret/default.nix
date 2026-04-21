@@ -11,7 +11,7 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
+  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/tls-secret-setup-done";
   certSecret = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}-tls";
   isManual = (serverConfig.certificates.provider or "manual") == "manual";
@@ -68,17 +68,11 @@ lib.mkIf isManual {
 
         # Default TLSStore so IngressRoutes without explicit tls.secretName use
         # the wildcard cert. Avoids copying the secret into every namespace.
-        echo "Creating default TLSStore..."
-        cat <<TLSSTOREEOF | $KUBECTL apply -f -
-        apiVersion: traefik.io/v1alpha1
-        kind: TLSStore
-        metadata:
-          name: default
-          namespace: traefik-system
-        spec:
-          defaultCertificate:
-            secretName: ${certSecret}
-        TLSSTOREEOF
+        ${k8s.applyManifestsScript {
+          name = "tls-secret";
+          manifests = [ ./manifests.yaml ];
+          substitutions = { CERT_SECRET = certSecret; };
+        }}
 
         print_success "TLS certificate" \
           "Secret: ${certSecret}" \

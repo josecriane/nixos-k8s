@@ -1,0 +1,6 @@
+proxy:
+  enabled: true
+  remoteurl: https://registry-1.docker.io
+persistence:
+  enabled: true
+  size: 100Gi

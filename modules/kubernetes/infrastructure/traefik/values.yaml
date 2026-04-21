@@ -1,0 +1,31 @@
+service:
+  type: LoadBalancer
+  spec:
+    loadBalancerIP: __TRAEFIK_IP__
+ports:
+  web:
+    port: 80
+    exposedPort: 80
+  websecure:
+    port: 443
+    exposedPort: 443
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+ingressRoute:
+  dashboard:
+    enabled: false
+logs:
+  general:
+    level: INFO
+  access:
+    enabled: true
+providers:
+  kubernetesCRD:
+    enabled: true
+  kubernetesIngress:
+    enabled: true
+additionalArguments: __ADDITIONAL_ARGS__
+persistence:
+  enabled: true
+  size: 1Gi

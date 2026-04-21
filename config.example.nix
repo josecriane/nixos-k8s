@@ -33,7 +33,17 @@
     docker-registry = false;
     docker-mirror = false;
     github-runners = false;
+    # Traefik dashboard IngressRoute at traefik.<subdomain>.<domain>.
+    # No auth is added by default, so either keep it inside a trusted LAN
+    # or configure `traefik.dashboard.middlewares` with a forward-auth /
+    # BasicAuth / ipAllowList middleware.
+    traefikDashboard = false;
   };
+
+  # Optional: middlewares chained in the Traefik dashboard IngressRoute.
+  # traefik.dashboard.middlewares = [
+  #   { name = "dashboard-auth"; namespace = "traefik-system"; }
+  # ];
 
   # GitHub Actions runners config (only if github-runners = true)
   # Auth via GitHub App (recommended): requires secrets/github-app-key.age (private key .pem)

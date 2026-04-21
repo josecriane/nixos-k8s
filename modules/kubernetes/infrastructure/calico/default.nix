@@ -1,0 +1,75 @@
+# Calico CNI via Tigera operator
+# Only installed on bootstrap server (operator manages DaemonSets on all nodes)
+{
+  lib,
+  pkgs,
+  serverConfig,
+  ...
+}:
+
+let
+  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
+  podCidr = (serverConfig.kubernetes or { }).podCidr or "10.42.0.0/16";
+
+  # Migration: the previous module was named "calico", this one is
+  # "tigera-operator". Remove the stale marker so the service lifecycle
+  # tracks the new name consistently, and stop the old unit if still loaded.
+  preHelm = pkgs.writeShellScript "tigera-operator-pre-helm" ''
+    set -euo pipefail
+    rm -f /var/lib/calico-setup-done
+    systemctl stop calico-setup.service 2>/dev/null || true
+  '';
+
+  release = k8s.createHelmRelease {
+    name = "tigera-operator";
+    namespace = "tigera-operator";
+    tier = "infrastructure";
+    pssLevel = "privileged";
+    repo = {
+      name = "projectcalico";
+      url = "https://docs.tigera.io/calico/charts";
+    };
+    chart = "projectcalico/tigera-operator";
+    timeout = "10m";
+    waitFor = "tigera-operator";
+    manifests = [ ./installation.yaml ];
+    substitutions = {
+      POD_CIDR = podCidr;
+    };
+    extraScript = ''
+      # Calico needs privileged (hostNetwork, NET_ADMIN, hostPath).
+      # tigera-operator ns was labeled via pssLevel; label the operator-managed ones too.
+      for ns in calico-system calico-apiserver; do
+        $KUBECTL create namespace "$ns" --dry-run=client -o yaml | $KUBECTL apply -f -
+        $KUBECTL label --overwrite namespace "$ns" \
+          pod-security.kubernetes.io/enforce=privileged \
+          pod-security.kubernetes.io/warn=privileged \
+          pod-security.kubernetes.io/audit=privileged
+      done
+
+      echo "Waiting for Calico pods..."
+      for i in $(seq 1 60); do
+        READY=$($KUBECTL get pods -n calico-system --no-headers 2>/dev/null | grep -c "Running" || echo "0")
+        if [ "$READY" -ge 2 ]; then
+          echo "Calico pods running ($READY)"
+          break
+        fi
+        echo "Waiting for Calico pods... ($i/60, running: $READY)"
+        sleep 5
+      done
+    '';
+  };
+in
+lib.recursiveUpdate release {
+  systemd.services.tigera-operator-setup = {
+    after = (release.systemd.services.tigera-operator-setup.after or [ ]) ++ [
+      "kube-apiserver.service"
+      "k3s.service"
+    ];
+    wants = [
+      "kube-apiserver.service"
+      "k3s.service"
+    ];
+    serviceConfig.ExecStartPre = "${preHelm}";
+  };
+}

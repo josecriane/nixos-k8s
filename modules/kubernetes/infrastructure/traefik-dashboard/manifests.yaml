@@ -1,0 +1,19 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: traefik-system
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`__HOST__`)
+      kind: Rule
+__MIDDLEWARES__
+      services:
+        - kind: TraefikService
+          name: api@internal
+  tls:
+    store:
+      name: default
+      namespace: traefik-system

@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: arc-runners-egress
+  namespace: arc-runners
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # DNS via CoreDNS (no port filter: NixOS' CoreDNS listens on 10053,
+    # and Calico evaluates the policy post-DNAT so the service port 53
+    # would not match).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+    # Docker mirror (internal only, HTTP)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: container-mirror
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Docker registry via Traefik (for docker login/push)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik-system
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    # Internet + LAN. Only link-local (cloud metadata, APIPA) stays blocked.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
