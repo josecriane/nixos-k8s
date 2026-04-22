@@ -1,0 +1,83 @@
+grafana:
+  admin:
+    existingSecret: grafana-admin-credentials
+    userKey: admin-user
+    passwordKey: admin-password
+  # OIDC env vars live in this secret (created by homelab's grafana-oidc-setup).
+  # preHelm ensures a stub exists so the pod starts even before real values
+  # are written.
+  envFromSecret: grafana-oidc-env
+  defaultDashboardsEnabled: false
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClassName: longhorn
+  deploymentStrategy:
+    type: Recreate
+  initChownData:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folder: /tmp/dashboards
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      searchNamespace: ALL
+  ingress:
+    enabled: false
+  grafana.ini:
+    server:
+      root_url: https://grafana.__SUBDOMAIN__.__DOMAIN__
+    dashboards:
+      # Sidecar mounts ConfigMap-backed dashboards under this path, see
+      # sidecar.dashboards.folder above.
+      default_home_dashboard_path: /tmp/dashboards/home.json
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring:3100
+      access: proxy
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          resources:
+            requests:
+              storage: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+  ingress:
+    enabled: false
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          resources:
+            requests:
+              storage: 2Gi
+  ingress:
+    enabled: false

@@ -1,0 +1,66 @@
+{
+  "uid": "home",
+  "title": "Home",
+  "tags": ["home"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "time": { "from": "now-6h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "dashlist",
+      "title": "All dashboards",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 18 },
+      "options": {
+        "showStarred": false,
+        "showRecentlyViewed": false,
+        "showSearch": true,
+        "showHeadings": false,
+        "maxItems": 100,
+        "query": "",
+        "tags": [],
+        "folderId": null,
+        "includeVars": false,
+        "keepTime": false
+      }
+    },
+    {
+      "id": 2,
+      "type": "dashlist",
+      "title": "Recently viewed",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 9 },
+      "options": {
+        "showStarred": false,
+        "showRecentlyViewed": true,
+        "showSearch": false,
+        "showHeadings": false,
+        "maxItems": 10,
+        "query": "",
+        "tags": [],
+        "includeVars": false,
+        "keepTime": false
+      }
+    },
+    {
+      "id": 3,
+      "type": "dashlist",
+      "title": "Starred",
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 9 },
+      "options": {
+        "showStarred": true,
+        "showRecentlyViewed": false,
+        "showSearch": false,
+        "showHeadings": false,
+        "maxItems": 10,
+        "query": "",
+        "tags": [],
+        "includeVars": false,
+        "keepTime": false
+      }
+    }
+  ]
+}

@@ -2,11 +2,27 @@
   config,
   lib,
   pkgs,
+  serverConfig ? { },
+  clusterNodes ? [ ],
   ...
 }:
 
 let
   cfg = config.smart;
+
+  monitoringEnabled = serverConfig.services.monitoring or false;
+
+  k8sCfg = serverConfig.kubernetes or { };
+  podCidr = k8sCfg.podCidr or "10.42.0.0/16";
+  serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
+  clusterSources = lib.concatStringsSep "," (
+    (map (n: n.ip) clusterNodes)
+    ++ [
+      podCidr
+      serviceCidr
+    ]
+  );
+  hasCluster = clusterNodes != [ ];
 in
 {
   options.smart = {
@@ -37,8 +53,13 @@ in
     exporter = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
-        description = "Expose SMART attributes to Prometheus via smartctl_exporter.";
+        default = monitoringEnabled;
+        defaultText = lib.literalExpression "serverConfig.services.monitoring or false";
+        description = ''
+          Expose SMART attributes to Prometheus via smartctl_exporter.
+          Defaults to true when cluster monitoring is enabled so the upstream
+          smartctl ServiceMonitor has something to scrape.
+        '';
       };
       port = lib.mkOption {
         type = lib.types.port;
@@ -74,6 +95,20 @@ in
       port = cfg.exporter.port;
       openFirewall = cfg.exporter.openFirewall;
     };
+
+    # NVMe controller char devices ship as 0600 root:root, which the
+    # smartctl-exporter user (supplementary group "disk") cannot open. Relax to
+    # disk group so the exporter can query SMART on NVMe drives.
+    services.udev.extraRules = lib.mkIf cfg.exporter.enable ''
+      KERNEL=="nvme[0-9]*", SUBSYSTEM=="nvme", MODE="0660", GROUP="disk"
+    '';
+
+    # On K8s clusters, expose the exporter port only to other cluster nodes and
+    # the pod/service CIDRs (matches the pattern used for kubelet/node-exporter).
+    # Standalone hosts can still use exporter.openFirewall = true for LAN-wide.
+    networking.firewall.extraCommands = lib.mkIf (cfg.exporter.enable && hasCluster) ''
+      iptables -A nixos-fw -s ${clusterSources} -p tcp --dport ${toString cfg.exporter.port} -j nixos-fw-accept
+    '';
 
     systemd.services.disk-health-check = {
       description = "SMART health check across all block devices";

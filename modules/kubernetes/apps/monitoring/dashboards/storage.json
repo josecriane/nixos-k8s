@@ -1,0 +1,444 @@
+{
+  "uid": "storage",
+  "title": "Storage",
+  "tags": ["homelab", "storage", "disks"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Machine",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values({__name__=~\"node_filesystem_size_bytes|smartctl_device\"}, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "sort": 1,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Filesystem Usage",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 - ((node_filesystem_avail_bytes{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"}) * 100)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "instance",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "__name__": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "__name__ 3": true,
+              "job": true,
+              "job 1": true,
+              "job 2": true,
+              "job 3": true,
+              "endpoint": true,
+              "endpoint 1": true,
+              "endpoint 2": true,
+              "endpoint 3": true,
+              "service": true,
+              "service 1": true,
+              "service 2": true,
+              "service 3": true,
+              "namespace": true,
+              "namespace 1": true,
+              "namespace 2": true,
+              "namespace 3": true,
+              "pod": true,
+              "pod 1": true,
+              "pod 2": true,
+              "pod 3": true,
+              "container": true,
+              "container 1": true,
+              "container 2": true,
+              "container 3": true,
+              "fstype 2": true,
+              "fstype 3": true,
+              "device 2": true,
+              "device 3": true,
+              "mountpoint 2": true,
+              "mountpoint 3": true
+            },
+            "renameByName": {
+              "instance": "Node",
+              "mountpoint": "Mount",
+              "mountpoint 1": "Mount",
+              "device": "Device",
+              "device 1": "Device",
+              "fstype": "FS",
+              "fstype 1": "FS",
+              "Value #A": "Used %",
+              "Value #B": "Size",
+              "Value #C": "Available"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [{ "field": "Used %", "desc": true }]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Used %" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "gradient" }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 70 },
+                    { "color": "red", "value": 90 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Size" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Available" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "SMART Health",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "smartctl_device_smart_status{instance=~\"$instance\"} and on(instance, device) smartctl_device{instance=~\"$instance\"}",
+          "instant": true,
+          "legendFormat": "{{instance}} / {{device}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "PASSED", "color": "green", "index": 0 } } },
+            { "type": "value", "options": { "0": { "text": "FAILED", "color": "red", "index": 1 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "SMART Temperature",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "smartctl_device_temperature{temperature_type=\"current\",instance=~\"$instance\"} and on(instance, device) smartctl_device{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} / {{device}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 45 },
+              { "color": "red", "value": 55 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "SMART Device Info",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "smartctl_device_power_on_seconds{instance=~\"$instance\"} / 3600 * on(instance, device) group_left(model_name, model_family, serial_number, firmware_version, interface, form_factor) smartctl_device{instance=~\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "service": true,
+              "namespace": true,
+              "pod": true,
+              "container": true,
+              "node": true,
+              "ata_additional_product_id": true,
+              "protocol": true
+            },
+            "renameByName": {
+              "instance": "Node",
+              "device": "Device",
+              "model_family": "Family",
+              "model_name": "Model",
+              "serial_number": "Serial",
+              "firmware_version": "Firmware",
+              "interface": "Interface",
+              "form_factor": "Form Factor",
+              "Value": "Power-On Hours"
+            },
+            "indexByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": { "fields": {}, "sort": [{ "field": "Node", "desc": false }] }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Power-On Hours" },
+            "properties": [{ "id": "unit", "value": "h" }, { "id": "decimals", "value": 0 }]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Disk Read Throughput",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_bytes_total{device!~\"loop.*|ram.*|dm-.*\",instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} / {{device}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Disk Write Throughput",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(node_disk_written_bytes_total{device!~\"loop.*|ram.*|dm-.*\",instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} / {{device}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Disk I/O Utilization",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(node_disk_io_time_seconds_total{device!~\"loop.*|ram.*|dm-.*\",instance=~\"$instance\"}[5m]) * 100",
+          "legendFormat": "{{instance}} / {{device}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Inodes Usage",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 - ((node_filesystem_files_free{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"} / node_filesystem_files{fstype!~\"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*|nfs.*|cifs\",mountpoint!~\"/mnt/nas.*|/var/lib/kubelet/.*\",instance=~\"$instance\"}) * 100)",
+          "legendFormat": "{{instance}} {{mountpoint}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    }
+  ]
+}

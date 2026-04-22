@@ -91,9 +91,9 @@ in
   };
 
   # Firewall
-  # API server (6443), kubelet (10250) and etcd (2379/2380) are NOT in
-  # allowedTCPPorts. They're restricted via extraCommands to cluster nodes +
-  # pod/service CIDRs only.
+  # API server (6443), kubelet (10250), node-exporter (9100) and etcd
+  # (2379/2380) are NOT in allowedTCPPorts. They're restricted via
+  # extraCommands to cluster nodes + pod/service CIDRs only.
   networking.firewall.allowedTCPPorts = [ ];
 
   networking.firewall.extraCommands =
@@ -107,8 +107,8 @@ in
       );
     in
     ''
-      # Kubelet
-      iptables -A nixos-fw -s ${sources} -p tcp --dport 10250 -j nixos-fw-accept
+      # Kubelet + node-exporter (scraped by Prometheus from within the cluster)
+      iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 10250,9100 -j nixos-fw-accept
     ''
     + lib.optionalString isServer ''
       # K3s API server

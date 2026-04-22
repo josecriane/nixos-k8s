@@ -21,5 +21,8 @@ in
     ]
     ++ lib.optionals (onBootstrap "github-runners") [
       ./github-runners
+    ]
+    ++ lib.optionals (onBootstrap "monitoring") [
+      ./monitoring
     ];
 }
