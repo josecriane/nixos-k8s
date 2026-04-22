@@ -48,7 +48,20 @@ in
       securePort = 6443;
       serviceClusterIpRange = serviceCidr;
       allowPrivileged = true;
-      extraOpts = "--enable-admission-plugins=NodeRestriction";
+      # NodeRestriction plus front-proxy request header auth. The NixOS
+      # services.kubernetes module generates the proxy-client cert but
+      # never configures the matching --requestheader-* flags, so any
+      # aggregated APIService (Calico via Tigera operator, metrics-server,
+      # prometheus-adapter, etc.) rejects proxied requests as user
+      # "front-proxy-client" instead of the real ServiceAccount.
+      extraOpts = builtins.concatStringsSep " " [
+        "--enable-admission-plugins=NodeRestriction"
+        "--requestheader-client-ca-file=/var/lib/kubernetes/secrets/ca.pem"
+        "--requestheader-allowed-names=front-proxy-client"
+        "--requestheader-username-headers=X-Remote-User"
+        "--requestheader-group-headers=X-Remote-Group"
+        "--requestheader-extra-headers-prefix=X-Remote-Extra-"
+      ];
     };
 
     controllerManager = lib.mkIf isServer {
