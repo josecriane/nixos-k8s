@@ -13,6 +13,7 @@
     ./ssh.nix
     ./security.nix
     ./encryption.nix
+    ./smart.nix
   ];
 
   # Timezone and locale
