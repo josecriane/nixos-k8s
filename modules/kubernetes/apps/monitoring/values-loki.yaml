@@ -14,6 +14,15 @@ loki:
         index:
           prefix: index_
           period: 24h
+  # Without retention Loki keeps chunks forever and the PVC fills. Retention
+  # is enforced by the compactor; its working_directory must be on the same
+  # filesystem as the chunks so deletes actually free space.
+  limits_config:
+    retention_period: 168h
+  compactor:
+    working_directory: /var/loki/compactor
+    retention_enabled: true
+    delete_request_store: filesystem
 singleBinary:
   replicas: 1
   persistence:

@@ -188,6 +188,7 @@ rec {
           values
           sets
           substitutions
+          pssLevel
           ;
         valuesFile' = if valuesFile != null then builtins.readFile valuesFile else null;
         manifests' = map (m: builtins.readFile m) manifests;
@@ -257,8 +258,15 @@ rec {
           ExecStart = pkgs.writeShellScript serviceName ''
             ${libShSource}
 
-            setup_preamble_hash "${markerFile}" "${name}" "${configHash}"
             wait_for_k3s
+
+            # Always ensure namespace exists with the correct PSS level, even
+            # when the helm install is skipped by the marker hash check. Pods
+            # requiring "privileged" (hostPath, hostNetwork, hostPID) need the
+            # label set before helm --wait, or it will time out.
+            ensure_namespace "${namespace}" "${pssLevel}"
+
+            setup_preamble_hash "${markerFile}" "${name}" "${configHash}"
 
             ${repoScript}
 
@@ -286,12 +294,6 @@ rec {
               }
 
             ${cleanupValues}
-
-            # Pod Security Standards label on the namespace
-            $KUBECTL label --overwrite namespace "${namespace}" \
-              pod-security.kubernetes.io/enforce="${pssLevel}" \
-              pod-security.kubernetes.io/warn="${pssLevel}" \
-              pod-security.kubernetes.io/audit="${pssLevel}"
 
             ${waitScript}
 

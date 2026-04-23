@@ -7,13 +7,18 @@
 # config.nix:
 #   services.monitoring = true;
 #
+# Optional StorageClass for all monitoring PVCs (Grafana, Prometheus,
+# Alertmanager, Loki). Omit to use the cluster default SC.
+#   monitoring.storageClass = "longhorn";
+#
 # Optional middlewares for ingress auth (homelab typically sets forward-auth):
 #   monitoring.prometheus.middlewares   = [ { name = "forward-auth"; namespace = "traefik-system"; } ];
 #   monitoring.alertmanager.middlewares = [ { name = "forward-auth"; namespace = "traefik-system"; } ];
 #   monitoring.grafana.middlewares      = [ ];  # Grafana self-auths (anonymous login page -> OIDC)
 #
-# If prometheus/alertmanager middlewares are empty, their ingresses are NOT created
-# (safer default, since they have no built-in auth).
+# If prometheus/alertmanager middlewares are empty, their ingresses are NOT
+# created (safer default, since they have no built-in auth). Toggling the list
+# back to empty after a deploy also removes any previously-created IngressRoute.
 {
   config,
   lib,
@@ -37,27 +42,51 @@ let
   promMw = monCfg.prometheus.middlewares or [ ];
   alertMw = monCfg.alertmanager.middlewares or [ ];
 
+  # Optional StorageClass override for every monitoring PVC. Unset = use the
+  # cluster default SC (k3s local-path, Longhorn if set as default, etc.).
+  storageClass = monCfg.storageClass or null;
+
+  kpsStorageSets = lib.optionals (storageClass != null) [
+    "grafana.persistence.storageClassName=${storageClass}"
+    "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=${storageClass}"
+    "alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName=${storageClass}"
+  ];
+
+  lokiStorageSets = lib.optionals (storageClass != null) [
+    "singleBinary.persistence.storageClass=${storageClass}"
+  ];
+
   mwArgs = mws: builtins.concatStringsSep " " (map (m: "\"${m.name}:${m.namespace}\"") mws);
 
-  prePromIngress = lib.optionalString (promMw != [ ]) ''
-    create_ingress_route \
-      "prometheus" "${ns}" \
-      "$(hostname prometheus)" \
-      "kube-prometheus-stack-prometheus" 9090 ${mwArgs promMw}
-  '';
+  # (Re)create the IngressRoute when middleware list is non-empty; delete any
+  # stale one when empty, so toggling middlewares off never leaves an
+  # unauthenticated ingress pointing at Prometheus/AM.
+  ingressToggle =
+    name: svc: port: host: mws:
+    if mws != [ ] then
+      ''
+        create_ingress_route \
+          "${name}" "${ns}" \
+          "$(hostname ${host})" \
+          "${svc}" ${toString port} ${mwArgs mws}
+      ''
+    else
+      ''
+        $KUBECTL delete ingressroute.traefik.io "${name}" -n "${ns}" --ignore-not-found
+      '';
 
-  preAlertIngress = lib.optionalString (alertMw != [ ]) ''
-    create_ingress_route \
-      "alertmanager" "${ns}" \
-      "$(hostname alertmanager)" \
-      "kube-prometheus-stack-alertmanager" 9093 ${mwArgs alertMw}
-  '';
+  prePromIngress =
+    ingressToggle "prometheus" "kube-prometheus-stack-prometheus" 9090 "prometheus"
+      promMw;
+  preAlertIngress =
+    ingressToggle "alertmanager" "kube-prometheus-stack-alertmanager" 9093 "alertmanager"
+      alertMw;
 
   preHelmKps = pkgs.writeShellScript "kube-prometheus-stack-pre-helm" ''
     ${k8s.libShSource}
     set -euo pipefail
     wait_for_k3s
-    ensure_namespace "${ns}"
+    ensure_namespace "${ns}" "privileged"
 
     # The Grafana sub-chart reads admin-user/admin-password from existingSecret.
     # Create if missing or recreate if the secret uses different keys
@@ -103,6 +132,9 @@ let
     };
     chart = "prometheus-community/kube-prometheus-stack";
     valuesFile = ./values-kps.yaml;
+    sets = kpsStorageSets;
+    # node-exporter DaemonSet uses hostPath/hostNetwork/hostPID.
+    pssLevel = "privileged";
     ingress = {
       host = "grafana";
       service = "kube-prometheus-stack-grafana";
@@ -126,6 +158,11 @@ let
     };
     chart = "grafana/loki";
     valuesFile = ./values-loki.yaml;
+    sets = lokiStorageSets;
+    # Shared "monitoring" namespace hosts privileged workloads (node-exporter,
+    # promtail). Keep the label consistent so intermediate deploys don't
+    # temporarily demote it to baseline.
+    pssLevel = "privileged";
   };
 
   promtail = k8s.createHelmRelease {

@@ -11,7 +11,6 @@ grafana:
   persistence:
     enabled: true
     size: 2Gi
-    storageClassName: longhorn
   deploymentStrategy:
     type: Recreate
   initChownData:
@@ -30,6 +29,10 @@ grafana:
       label: grafana_datasource
       labelValue: "1"
       searchNamespace: ALL
+      # Pin UID of the auto-provisioned Prometheus datasource so shipped
+      # dashboards can reference it by a stable "prometheus" UID.
+      defaultDatasourceEnabled: true
+      uid: prometheus
   ingress:
     enabled: false
   grafana.ini:
@@ -48,6 +51,7 @@ grafana:
   additionalDataSources:
     - name: Loki
       type: loki
+      uid: loki
       url: http://loki.monitoring:3100
       access: proxy
 
@@ -57,7 +61,6 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: longhorn
           resources:
             requests:
               storage: 10Gi
@@ -75,7 +78,6 @@ alertmanager:
     storage:
       volumeClaimTemplate:
         spec:
-          storageClassName: longhorn
           resources:
             requests:
               storage: 2Gi
