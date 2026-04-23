@@ -96,6 +96,29 @@ in
       openFirewall = cfg.exporter.openFirewall;
     };
 
+    # The upstream smartctl_exporter module runs --smartctl scan which picks
+    # up iSCSI virtual disks (e.g. Longhorn replicas) and emits 0C readings
+    # that pollute Prometheus. Wrap ExecStart so only non-iSCSI block devices
+    # are passed as --smartctl.device.
+    systemd.services."prometheus-smartctl-exporter".serviceConfig.ExecStart =
+      let
+        exporterCfg = config.services.prometheus.exporters.smartctl;
+        start = pkgs.writeShellScript "smartctl-exporter-start" ''
+          set -eu
+          args=(
+            "--web.listen-address=${exporterCfg.listenAddress}:${toString exporterCfg.port}"
+            "--smartctl.interval=${exporterCfg.maxInterval}"
+          )
+          while IFS= read -r dev; do
+            [ -n "$dev" ] || continue
+            args+=("--smartctl.device=$dev")
+          done < <(${pkgs.util-linux}/bin/lsblk -dno NAME,TYPE,TRAN | \
+            ${pkgs.gawk}/bin/awk '$2=="disk" && $3!="iscsi" {print "/dev/"$1}')
+          exec ${pkgs.prometheus-smartctl-exporter}/bin/smartctl_exporter "''${args[@]}"
+        '';
+      in
+      lib.mkIf cfg.exporter.enable (lib.mkForce start.outPath);
+
     # NVMe controller char devices ship as 0600 root:root, which the
     # smartctl-exporter user (supplementary group "disk") cannot open. Relax to
     # disk group so the exporter can query SMART on NVMe drives.
@@ -120,12 +143,13 @@ in
             pkgs.smartmontools
             pkgs.coreutils
             pkgs.gnugrep
+            pkgs.gawk
             pkgs.util-linux
           ]
         }:$PATH
 
         exit_code=0
-        for dev in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}'); do
+        for dev in $(lsblk -dno NAME,TYPE,TRAN | awk '$2=="disk" && $3!="iscsi" {print "/dev/"$1}'); do
           if ! out=$(smartctl -H "$dev" 2>&1); then
             echo "ERROR: smartctl failed on $dev"
             exit_code=1
@@ -170,7 +194,7 @@ in
         threshold=${toString cfg.tempThreshold}
         exit_code=0
 
-        for dev in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}'); do
+        for dev in $(lsblk -dno NAME,TYPE,TRAN | awk '$2=="disk" && $3!="iscsi" {print "/dev/"$1}'); do
           temp=$(smartctl -A "$dev" 2>/dev/null | \
             awk '/Temperature_Celsius|Current Drive Temperature|Temperature:/ { for (i=1;i<=NF;i++) if ($i+0>0 && $i+0<150) { print $i+0; exit } }')
           [ -z "$temp" ] && continue
