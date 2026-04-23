@@ -10,7 +10,9 @@ Declarative multi-node Kubernetes cluster on NixOS. Everything defined in Nix, d
 - **MetalLB** for L2 LoadBalancer IPs on your LAN
 - **Traefik** as ingress controller with HTTPS
 - **TLS certificates**: manual (via agenix) or automatic (cert-manager + Cloudflare)
-- **NFS or local storage** with shared PV/PVC
+- **Storage options**: NFS, local hostPath, or Longhorn (replicated block storage)
+- **Monitoring stack**: kube-prometheus-stack (Prometheus + Grafana + Alertmanager) + Loki + Promtail
+- **SMART disk monitoring** via smartd + smartctl_exporter, with temperature and space checks
 - **Optional LUKS disk encryption** with SSH or TPM2 unlock
 - **Hardened base** with SSH key-only auth, fail2ban, kernel hardening, and systemd sandboxing
 
@@ -238,10 +240,30 @@ certificates = {
 
 ### Storage
 
-Two modes controlled by `config.nix`:
+Three modes, not mutually exclusive. You can enable Longhorn alongside NFS or local.
 
 - **NFS** (`storage.useNFS = true`): Kubernetes-native NFS PVs, pods can schedule on any node
 - **Local** (`storage.useNFS = false`): hostPath PV with nodeAffinity to the bootstrap server
+- **Longhorn** (`storage.longhorn.enable = true`): replicated block storage. Installs Longhorn via Helm, configures every node with open-iscsi and the required kernel modules (`iscsi_tcp`, `nfs`, `nfsv4`, `dm_crypt`), and (optionally) sets `longhorn` as the default StorageClass.
+
+```nix
+storage = {
+  useNFS = false;
+  longhorn = {
+    enable = true;
+    replicaCount = 2;           # replicas per volume
+    defaultStorageClass = true; # unsets default on k3s local-path
+    ingress = {                 # optional: Longhorn UI at longhorn.<sub>.<domain>
+      host = "longhorn";
+      middlewares = [
+        { name = "forward-auth"; namespace = "traefik-system"; }
+      ];
+    };
+  };
+};
+```
+
+When `defaultStorageClass = true`, the setup script also removes the default annotation from k3s's `local-path` StorageClass so PVC binding stays predictable. The Longhorn UI has no built-in auth, so if you expose the `ingress` block, add a `middlewares` entry to chain a forward-auth / BasicAuth / ipAllowList middleware.
 
 ## Secrets
 
@@ -335,6 +357,7 @@ nixos-k8s/
       ssh.nix                        SSH hardening
       security.nix                   Firewall, fail2ban, kernel sysctls
       encryption.nix                 LUKS disk encryption (SSH/TPM unlock)
+      smart.nix                      SMART monitoring (smartd + exporter + periodic checks)
     services/                        System services (add as needed)
     kubernetes/
       lib.nix                        Nix helpers + createHelmRelease
@@ -355,12 +378,20 @@ nixos-k8s/
         local-path-provisioner.nix   Storage provisioner (kubeadm only)
         nfs-mounts.nix               NFS mount declarations (all nodes)
         nfs-storage.nix              PV/PVC creation (bootstrap)
+        longhorn/                    Longhorn storage (host prereqs + Helm release)
         cleanup.nix                  Cleanup disabled services (bootstrap)
       apps/
         default.nix                  Apps orchestrator
         docker-registry/             Docker Registry + UI
         docker-mirror/               Docker Hub pull-through cache
         github-runners/              GitHub Actions self-hosted runners (DinD)
+        monitoring/                  kube-prometheus-stack + Loki + Promtail
+          default.nix                Orchestrator (Grafana/Prometheus/AM/Loki/Promtail releases)
+          dashboards.nix             Built-in Grafana dashboards (ConfigMaps)
+          smart-exporter.nix         Prometheus scrape config for smartctl_exporter
+          nas-smart-exporter.nix     Scrape NAS-side SMART exporter (if nas.* defined)
+          nas-node-exporter.nix      Scrape NAS-side node_exporter
+          node-exporter-relabel.nix  Relabels to tag series with node role
   scripts/
     setup.sh                         Interactive config wizard
     install.sh                       Node installation with nixos-anywhere
@@ -414,6 +445,8 @@ All services are optional, toggled in `config.nix`. They deploy as Helm charts a
 | Docker Registry | `services.docker-registry = true` | `registry.<sub>.<domain>` | Private registry. Anonymous pulls, authenticated push (BasicAuth via `registry-htpasswd.age`). Web UI at `registry-ui.<sub>.<domain>` (auth required). |
 | Docker Mirror | `services.docker-mirror = true` | cluster-internal | Pull-through cache for Docker Hub. Reachable only from cluster pods at `docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000`. |
 | GitHub Runners | `services.github-runners = true` | - | Self-hosted ARC runners with Docker-in-Docker. Egress restricted via NetworkPolicy (see security notes below). |
+| Longhorn | `storage.longhorn.enable = true` | `longhorn.<sub>.<domain>` (opt-in) | Replicated block storage. Host prereqs on every node (open-iscsi + kernel modules) applied automatically. UI ingress is opt-in via `storage.longhorn.ingress`. |
+| Monitoring | `services.monitoring = true` | `grafana.<sub>.<domain>` (+ optional `prometheus.`, `alertmanager.`) | kube-prometheus-stack + Loki + Promtail. Scrapes kubelet, node-exporter, and smartctl_exporter. Dashboards loaded from ConfigMaps labelled `grafana_dashboard=1`. Prometheus/Alertmanager ingresses only created when `monitoring.<name>.middlewares` is non-empty. |
 
 ### Docker Registry config
 
@@ -591,6 +624,41 @@ k8s.storage.nfs = {
 ```
 
 Use this when you want the shared PVC in a specific namespace, with a project-specific folder layout, or to gate on extra NAS mounts.
+
+**`smart.*`** (`modules/core/smart.nix`)
+
+```nix
+smart = {
+  enable = true;              # smartd + periodic health/temperature/space checks
+  tempThreshold = 55;         # Celsius above which a warning is logged
+  usageThreshold = 85;        # filesystem usage percent above which a warning is logged
+  monitoredPaths = [ "/" ];   # paths checked by the disk-space timer
+  exporter = {
+    enable = true;            # smartctl_exporter for Prometheus (defaults to monitoring toggle)
+    port = 9633;
+    openFirewall = false;     # true opens LAN-wide; cluster nodes + pod/service CIDRs are always allowed
+  };
+};
+```
+
+The exporter skips iSCSI virtual disks (e.g. Longhorn replica attachments), so the metric stream stays clean on cluster nodes that also serve as Longhorn workers. Periodic health/temperature checks apply the same filter. If `exporter.enable = true` without a cluster, set `openFirewall = true` so Prometheus can reach port 9633.
+
+**`monitoring.*`** (`modules/kubernetes/apps/monitoring/`)
+
+```nix
+monitoring = {
+  storageClass = "longhorn";                     # optional; overrides default SC for all monitoring PVCs
+  grafana.middlewares      = [ ];                # Grafana self-auths (OIDC / login page)
+  prometheus.middlewares   = [                   # empty list = no ingress created
+    { name = "forward-auth"; namespace = "traefik-system"; }
+  ];
+  alertmanager.middlewares = [
+    { name = "forward-auth"; namespace = "traefik-system"; }
+  ];
+};
+```
+
+Grafana is exposed at `grafana.<sub>.<domain>`. Prometheus and Alertmanager ingresses are only created when their respective `middlewares` lists are non-empty (they have no built-in auth, so empty = no ingress). Toggling a middleware list back to empty after a deploy deletes the stale IngressRoute automatically.
 
 **`k8s.cleanup.serviceMap`** (`modules/kubernetes/infrastructure/cleanup.nix`)
 

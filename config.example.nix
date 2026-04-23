@@ -33,6 +33,10 @@
     docker-registry = false;
     docker-mirror = false;
     github-runners = false;
+    # kube-prometheus-stack (Prometheus + Grafana + Alertmanager) + Loki +
+    # Promtail. Grafana ingress created at grafana.<subdomain>.<domain>;
+    # Prometheus/Alertmanager ingresses are opt-in via `monitoring.*.middlewares`.
+    monitoring = false;
     # Traefik dashboard IngressRoute at traefik.<subdomain>.<domain>.
     # No auth is added by default, so either keep it inside a trusted LAN
     # or configure `traefik.dashboard.middlewares` with a forward-auth /
@@ -74,7 +78,46 @@
 
   storage = {
     useNFS = false;
+    # Longhorn replicated block storage. Installs open-iscsi + kernel modules on
+    # every node, then deploys Longhorn via Helm from the bootstrap server.
+    # longhorn = {
+    #   enable = true;
+    #   replicaCount = 2;           # replicas per volume
+    #   defaultStorageClass = true; # also unsets default on k3s local-path
+    #   ingress = {
+    #     host = "longhorn";        # longhorn.<subdomain>.<domain>
+    #     middlewares = [
+    #       { name = "forward-auth"; namespace = "traefik-system"; }
+    #     ];
+    #   };
+    # };
   };
+
+  # SMART disk monitoring (smartd + periodic health/temperature/space checks).
+  # Defaults are applied on every node without explicit config. Override as needed.
+  # smart = {
+  #   enable = true;
+  #   tempThreshold = 55;
+  #   usageThreshold = 85;
+  #   monitoredPaths = [ "/" ];
+  #   exporter = {
+  #     enable = true;          # defaults to services.monitoring
+  #     port = 9633;
+  #     openFirewall = false;
+  #   };
+  # };
+
+  # Monitoring stack options (only applied when services.monitoring = true).
+  # monitoring = {
+  #   storageClass = "longhorn"; # optional SC override for all monitoring PVCs
+  #   grafana.middlewares      = [ ]; # Grafana self-auths (login page / OIDC)
+  #   prometheus.middlewares   = [
+  #     { name = "forward-auth"; namespace = "traefik-system"; }
+  #   ];
+  #   alertmanager.middlewares = [
+  #     { name = "forward-auth"; namespace = "traefik-system"; }
+  #   ];
+  # };
 
   certificates = {
     # "acme" = automatic via cert-manager + Cloudflare DNS-01 (requires cloudflare-api-token.age)

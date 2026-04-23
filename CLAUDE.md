@@ -64,6 +64,13 @@ Use the nixos-devops-expert agent.
 ## Module Structure
 
 ```
+modules/core/
+  nix.nix                  - Flakes, GC, store optimization
+  users.nix                - Admin user, sudo, SSH keys
+  ssh.nix                  - SSH hardening
+  security.nix             - Firewall, fail2ban, kernel sysctls
+  encryption.nix           - LUKS disk encryption (SSH/TPM unlock)
+  smart.nix                - SMART monitoring (smartd + smartctl_exporter + periodic checks)
 modules/kubernetes/
   default.nix              - Orchestrator with conditional imports by role
   lib.nix                  - Nix helpers (libShSource, hostname, createLinuxServerDeployment)
@@ -79,7 +86,13 @@ modules/kubernetes/
     cert-manager.nix       - cert-manager (bootstrap only, acme provider)
     nfs-mounts.nix         - NFS mount declarations (all nodes)
     nfs-storage.nix        - PV/PVC creation (bootstrap only)
+    longhorn/              - Longhorn storage (host prereqs on all nodes, helm on bootstrap)
     cleanup.nix            - Service cleanup (bootstrap only)
+  apps/
+    docker-registry/       - Private Docker registry + UI (bootstrap only)
+    docker-mirror/         - Docker Hub pull-through cache (bootstrap only)
+    github-runners/        - ARC self-hosted runners (DinD, bootstrap only)
+    monitoring/            - kube-prometheus-stack + Loki + Promtail (bootstrap only)
 ```
 
 ## Boot Ordering (systemd tiers)
@@ -128,3 +141,4 @@ All settings in `config.nix` (see `config.example.nix`). Nodes defined in `nodes
 
 - **NFS** (`storage.useNFS = true`): NFS PV type, mounts on all nodes, pods schedule anywhere
 - **Local** (`storage.useNFS = false`): hostPath with nodeAffinity to bootstrap server
+- **Longhorn** (`storage.longhorn.enable = true`): replicated block storage. Host prereqs (open-iscsi + iscsi_tcp/nfs/nfsv4/dm_crypt kernel modules, iscsiadm/mount.nfs tmpfiles symlinks at `/usr/local/*`) applied on every node; helm release from bootstrap only. `defaultStorageClass = true` unsets the default annotation on k3s local-path.
