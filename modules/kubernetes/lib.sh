@@ -238,10 +238,30 @@ ensure_namespace() {
   local ns="$1"
   local pss_level="${2:-baseline}"
   $KUBECTL create namespace "$ns" --dry-run=client -o yaml | $KUBECTL apply -f -
+
+  # Pod Security Standard is widened-wins: if the namespace is already labelled
+  # at a more permissive level (e.g. "privileged" set by another workload in
+  # the same NS), keep it. Otherwise overwriting with "baseline" would evict
+  # privileged pods like jellyfin (hostPath /dev/dri).
+  local current
+  current=$($KUBECTL get namespace "$ns" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}' 2>/dev/null)
+  _pss_rank() {
+    case "$1" in
+      privileged) echo 3 ;;
+      baseline) echo 2 ;;
+      restricted) echo 1 ;;
+      *) echo 0 ;;
+    esac
+  }
+  local final="$pss_level"
+  if [ -n "$current" ] && [ "$(_pss_rank "$current")" -gt "$(_pss_rank "$pss_level")" ]; then
+    final="$current"
+  fi
+
   $KUBECTL label --overwrite namespace "$ns" \
-    "pod-security.kubernetes.io/enforce=$pss_level" \
-    "pod-security.kubernetes.io/warn=$pss_level" \
-    "pod-security.kubernetes.io/audit=$pss_level"
+    "pod-security.kubernetes.io/enforce=$final" \
+    "pod-security.kubernetes.io/warn=$final" \
+    "pod-security.kubernetes.io/audit=$final"
 }
 
 # ============================================
