@@ -85,25 +85,26 @@ fi
 
 echo -e "${YELLOW}Enrolling...${NC}"
 
-# Pipe the passphrase via stdin. The remote reads it into a tmp file (600),
-# runs systemd-cryptenroll, and removes the tmp file afterwards.
-REMOTE_CMD=$(cat <<REMOTE
-set -euo pipefail
-KF=\$(mktemp)
-chmod 600 "\$KF"
-cat > "\$KF"
-sudo systemd-cryptenroll "$LUKS_DEVICE" \\
-  --tpm2-device=auto \\
-  --tpm2-pcrs="$TPM_PCRS" \\
-  --unlock-key-file="\$KF"
-shred -u "\$KF" 2>/dev/null || rm -f "\$KF"
-REMOTE
-)
+# Two-step:
+#   1. Write the LUKS passphrase to a 0600 tmp file on the remote (stdin used).
+#   2. Run sudo interactively (`ssh -t`) so the admin can type the sudo password;
+#      cryptenroll reads the passphrase from the tmp file, which is shredded
+#      afterwards regardless of outcome.
+KF_REMOTE="/tmp/tpm-enroll-$$.key"
 
-printf '%s' "$PASSPHRASE" | ssh "$ADMIN_USER@$NODE_IP" "$REMOTE_CMD"
+cleanup_remote_key() {
+  ssh -o ConnectTimeout=5 "$ADMIN_USER@$NODE_IP" "shred -u '$KF_REMOTE' 2>/dev/null || rm -f '$KF_REMOTE'" >/dev/null 2>&1 || true
+}
+trap cleanup_remote_key EXIT
 
-# Clear passphrase from shell state
+printf '%s' "$PASSPHRASE" | ssh "$ADMIN_USER@$NODE_IP" "umask 077 && cat > '$KF_REMOTE'"
 unset PASSPHRASE
+
+ssh -t "$ADMIN_USER@$NODE_IP" \
+  "sudo systemd-cryptenroll '$LUKS_DEVICE' \
+    --tpm2-device=auto \
+    --tpm2-pcrs='$TPM_PCRS' \
+    --unlock-key-file='$KF_REMOTE'"
 
 echo ""
 echo -e "${GREEN}TPM2 enrolled on ${NODE}${NC}"
