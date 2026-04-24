@@ -4,8 +4,13 @@ metadata:
   name: default
 spec:
   calicoNetwork:
+    # VXLAN-only: skip BGP entirely so calico-node's readiness probe does not
+    # block on `bird-ready` (the LAN would need TCP/179 open between nodes to
+    # satisfy it, which we don't want to require). VXLANCrossSubnet still
+    # reaches pods on the other side of the LAN without the BGP peering.
+    bgp: Disabled
     ipPools:
     - cidr: __POD_CIDR__
-      encapsulation: VXLANCrossSubnet
+      encapsulation: VXLAN
       natOutgoing: Enabled
       nodeSelector: all()

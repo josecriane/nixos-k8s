@@ -54,7 +54,22 @@ Use the nixos-devops-expert agent.
 ### Secrets and Passwords
 - `k3s-token.age`: shared cluster join token (all nodes)
 - `cloudflare-api-token.age`: cert-manager (bootstrap server only)
+- `registry-htpasswd.age`: shared by docker-registry AND docker-mirror (BasicAuth)
+- `docker-mirror-proxy.age`: Docker Hub upstream creds for the mirror (two lines: user, PAT)
+- `kubernetes-ca.age` + `kubernetes-apitoken.age`: populated by `scripts/sync-bootstrap-secrets.sh` after bootstrap install; consumed by workers via `age.secrets` in `kubeadm.nix` (guarded by `builtins.pathExists` so setups without workers don't fail evaluation).
 - Never generate random passwords unconditionally. Check if K8s secret exists first.
+
+### Multi-node kubeadm bootstrap secrets
+- `services.kubernetes` with `easyCerts = true` does not ship CA/token to workers on its own. `kubeadm.nix` guards the `age.secrets.kubernetes-{ca,apitoken}` block with `wantsBootstrapCerts = (!isBootstrap) && pathExists kubernetes-ca.age && pathExists kubernetes-apitoken.age`, so:
+  - New projects that haven't run `sync-bootstrap-secrets` yet still evaluate.
+  - Once the pair exists, every worker decrypts them to `/var/lib/kubernetes/secrets/ca.pem` and `apitoken.secret` on activation.
+- `install.sh` handles the bootstrap host key automatically; the CA/token sync is an explicit second step.
+
+### Script apps
+- Registered in `flake.nix` apps.${system}: `install`, `unlock`, `enroll-tpm`, `setup`, `add-node`, `sync-bootstrap-secrets`.
+- `scripts/enroll-tpm.sh` writes the LUKS passphrase to `/tmp/tpm-enroll-$$.key` on the target via the first ssh (stdin), then runs `ssh -t sudo systemd-cryptenroll ...` so sudo can prompt over tty. The tmp file is shredded on EXIT via trap.
+- `scripts/install.sh` matches node keys with `^[[:space:]]*<node>[[:space:]]*=` (attribute keys in `config.nix` are unquoted). Greps tolerate empty output with `|| true` so `set -e` doesn't mask a clean nixos-anywhere run.
+- `scripts/sync-bootstrap-secrets.sh` uses `nix eval --impure --json` to read booleans (`--raw` refuses to coerce bool to string).
 
 ### Code Style
 - No inline comments explaining obvious code. Only comment non-obvious logic.
@@ -78,10 +93,16 @@ modules/kubernetes/
   systemd-targets.nix      - Boot tier targets (bootstrap server only beyond infrastructure)
   infrastructure/
     k3s.nix                - K3s engine (all nodes if engine=k3s)
-    kubeadm.nix            - kubeadm engine via services.kubernetes (all nodes if engine=kubeadm)
+    kubeadm.nix            - kubeadm engine via services.kubernetes (all nodes if engine=kubeadm).
+                             Opens firewall for 6443/10250/9100/8888 to cluster nodes + pod/service CIDRs.
+                             Consumes kubernetes-ca.age + kubernetes-apitoken.age (when present) on worker nodes.
     cni-flannel.nix        - Flannel CNI for kubeadm (bootstrap only)
-    cni-calico.nix         - Calico CNI via Tigera operator (bootstrap only)
-    metallb.nix            - MetalLB (bootstrap only)
+    calico/                - Calico CNI via Tigera operator (bootstrap only). Sets SKIP_NODE_READY=1 on
+                             its setup service because the CNI installer itself makes the node Ready
+                             (wait_for_k3s would otherwise deadlock on first boot).
+    metallb/               - MetalLB (bootstrap only). L2Advertisement pinned to the bootstrap node via
+                             nodeSelector kubernetes.io/hostname=<bootstrap> to avoid gratuitous-ARP
+                             elections when workers join/leave.
     traefik.nix            - Traefik (bootstrap only)
     cert-manager.nix       - cert-manager (bootstrap only, acme provider)
     nfs-mounts.nix         - NFS mount declarations (all nodes)
@@ -89,10 +110,19 @@ modules/kubernetes/
     longhorn/              - Longhorn storage (host prereqs on all nodes, helm on bootstrap)
     cleanup.nix            - Service cleanup (bootstrap only)
   apps/
-    docker-registry/       - Private Docker registry + UI (bootstrap only)
-    docker-mirror/         - Docker Hub pull-through cache (bootstrap only)
+    docker-registry/       - Private Docker registry + UI (bootstrap only). Anonymous pulls, BasicAuth
+                             push (registry-htpasswd.age shared with docker-mirror).
+    docker-mirror/         - Docker Hub pull-through cache (bootstrap only). External ingress at
+                             mirror.<sub>.<domain> with BasicAuth (reuses registry-htpasswd.age) plus
+                             internal svc URL for pods. Docker Hub upstream creds injected into the
+                             chart-generated Secret post-install via extraScript + rollout restart
+                             (the twuni chart has no existingSecret field for proxy creds).
     github-runners/        - ARC self-hosted runners (DinD, bootstrap only)
-    monitoring/            - kube-prometheus-stack + Loki + Promtail (bootstrap only)
+    monitoring/            - kube-prometheus-stack + Loki + Promtail (bootstrap only). Grafana
+                             admin password is random, stored in the grafana-admin-credentials Secret
+                             (namespace monitoring). smart/nas-smart/nas-node-exporter manifests use
+                             hashString(manifestText) for configHash to avoid IFD on the writeText
+                             derivation (which breaks nixos-anywhere's path-signing check).
 ```
 
 ## Boot Ordering (systemd tiers)
@@ -127,6 +157,7 @@ On other nodes: only `k3s-infrastructure` target (K3s join + CNI).
 | `make ssh NODE=x` | SSH into a node |
 | `make unlock NODE=x` | SSH-unlock LUKS disk via initrd |
 | `make enroll-tpm NODE=x` | Enroll TPM2 for auto-unlock (once, after first boot) |
+| `make sync-bootstrap-secrets NODE=x` | Copy CA+apitoken from a freshly installed bootstrap into agenix so workers can install declaratively |
 | `make status` | Show cluster status |
 | `make logs NODE=x` | Show K3s logs for a node |
 | `make check` | Build all configs without deploying |

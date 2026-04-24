@@ -15,3 +15,10 @@ metadata:
 spec:
   ipAddressPools:
   - default-pool
+  # Pin the gratuitous ARP announcement to the bootstrap node so a new
+  # worker joining the cluster doesn't trigger a re-election (MetalLB L2
+  # mode is flaky at leader hand-off: some switches keep the stale ARP
+  # cache and the LB IP goes dark until speakers are restarted).
+  nodeSelectors:
+    - matchLabels:
+        kubernetes.io/hostname: __BOOTSTRAP_NODE__

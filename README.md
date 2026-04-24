@@ -110,19 +110,22 @@ Copy the `Makefile` and `scripts/` from this repo into your private repo. Update
 ## Commands
 
 ```
-make help             Show all available targets
-make setup            Run interactive setup wizard
-make install NODE=x   Install NixOS on a node (FORMATS DISK)
-make deploy NODE=x    Deploy config to a node
-make deploy-all       Deploy to all nodes (servers first)
-make bootstrap        Initial cluster bootstrap
-make ssh NODE=x       SSH into a node
-make status           Show cluster nodes and pods
-make logs NODE=x      Show K3s logs for a node
-make reinstall SVC=x  Force reinstall a service (clears marker)
-make check            Build all configs without deploying
-make fmt              Format .nix files
-make clean            Remove build artifacts
+make help                          Show all available targets
+make setup                         Run interactive setup wizard
+make install NODE=x                Install NixOS on a node (FORMATS DISK)
+make deploy NODE=x                 Deploy config to a node
+make deploy-all                    Deploy to all nodes (servers first)
+make bootstrap                     Initial cluster bootstrap
+make ssh NODE=x                    SSH into a node
+make unlock NODE=x                 SSH-unlock a LUKS disk via initrd
+make enroll-tpm NODE=x             Enroll TPM2 for auto-unlock (run once after install)
+make sync-bootstrap-secrets NODE=x Pull CA/apitoken from bootstrap and encrypt into agenix
+make status                        Show cluster nodes and pods
+make logs NODE=x                   Show K3s logs for a node
+make reinstall SVC=x               Force reinstall a service (clears marker)
+make check                         Build all configs without deploying
+make fmt                           Format .nix files
+make clean                         Remove build artifacts
 ```
 
 Services deployed with `createHelmRelease` detect config changes automatically. When you change a chart version, values, or ingress in a `.nix` file, `make deploy` will re-run only the affected services. No manual upgrade step needed.
@@ -317,9 +320,12 @@ Service-specific secrets:
 
 | Secret | Purpose | When needed |
 |--------|---------|-------------|
-| `registry-htpasswd.age` | htpasswd for Docker registry push auth | `services.docker-registry = true` |
+| `registry-htpasswd.age` | htpasswd for Docker registry/mirror BasicAuth | `services.docker-registry = true` or `services.docker-mirror = true` |
+| `docker-mirror-proxy.age` | Docker Hub upstream creds for the mirror (two lines: user, PAT) | `services.docker-mirror = true` |
 | `github-app-key.age` | GitHub App private key (.pem) | `services.github-runners = true` + `githubApp` block |
 | `github-pat.age` | GitHub PAT (fallback if no App configured) | `services.github-runners = true` without `githubApp` |
+| `kubernetes-ca.age` | Kubernetes CA cert generated on the master | `kubernetes.engine = "kubeadm"` + worker nodes (auto-populated by `make sync-bootstrap-secrets`) |
+| `kubernetes-apitoken.age` | cfssl bootstrap token for worker CSR signing | Same as `kubernetes-ca.age` |
 
 Optional:
 
@@ -436,6 +442,40 @@ nixos-k8s/
 
 The install script auto-detects hardware (CPU, disk, network driver) and generates `hardware-configuration.nix` if it doesn't exist.
 
+## Multi-node with kubeadm
+
+With `kubernetes.engine = "kubeadm"`, NixOS `services.kubernetes` handles the control plane and generates its own PKI on the bootstrap server. The CA and a bootstrap token end up in `/var/lib/kubernetes/secrets/{ca.pem,apitoken.secret}`. Worker nodes need both files before `certmgr` starts (certmgr uses them to sign kubelet/kube-proxy client certs against cfssl on the master); without them kubelet loops on missing client certificates.
+
+To keep this fully declarative, run once after installing the bootstrap:
+
+```bash
+make install NODE=<bootstrap>
+make sync-bootstrap-secrets NODE=<bootstrap>
+# git add secrets/kubernetes-ca.age secrets/kubernetes-apitoken.age
+# git commit + push
+```
+
+`make sync-bootstrap-secrets` SSHes into the bootstrap, copies `ca.pem` and `apitoken.secret` into an agenix-encrypted pair (`kubernetes-ca.age`, `kubernetes-apitoken.age`) encrypted for every host key in `secrets/secrets.nix`. From then on every worker (`make install NODE=<worker>`) picks the decrypted files up on first activation and joins the cluster without manual scp.
+
+### Firewall ports
+
+`kubeadm.nix` opens the ports that multi-node clusters need, restricted to cluster nodes and pod/service CIDRs:
+
+| Port | Use |
+|------|-----|
+| 6443 / 10257 / 10259 | apiserver, controller-manager, scheduler (server role) |
+| 2379 / 2380 | etcd peer + client (HA server role) |
+| 8888 | cfssl API (workers authenticate their CSR against this) |
+| 10250 | kubelet |
+| 9100 | node-exporter (hostNetwork, scraped cross-node) |
+| 8472/UDP | VXLAN overlay (Flannel) |
+
+### MetalLB L2 election
+
+`L2Advertisement` is pinned to the bootstrap node via `nodeSelectors: kubernetes.io/hostname: <bootstrap>`. Without the pin, joining a new worker triggers a re-election of the gratuitous ARP owner and L2 networks frequently keep a stale ARP cache, blackholing the LB IP until speakers are restarted. Keeping the announcement on a single stable node avoids that flap.
+
+If you move the bootstrap role to another node, bump the `L2Advertisement` accordingly (the module picks up the current bootstrap from `clusterNodes`).
+
 ## Included services
 
 All services are optional, toggled in `config.nix`. They deploy as Helm charts automatically.
@@ -443,7 +483,7 @@ All services are optional, toggled in `config.nix`. They deploy as Helm charts a
 | Service | Toggle | URL | Notes |
 |---------|--------|-----|-------|
 | Docker Registry | `services.docker-registry = true` | `registry.<sub>.<domain>` | Private registry. Anonymous pulls, authenticated push (BasicAuth via `registry-htpasswd.age`). Web UI at `registry-ui.<sub>.<domain>` (auth required). |
-| Docker Mirror | `services.docker-mirror = true` | cluster-internal | Pull-through cache for Docker Hub. Reachable only from cluster pods at `docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000`. |
+| Docker Mirror | `services.docker-mirror = true` | `mirror.<sub>.<domain>` + cluster-internal | Pull-through cache for Docker Hub. BasicAuth reuses `registry-htpasswd.age`. Docker Hub upstream creds in `docker-mirror-proxy.age` (two lines: user + PAT) avoid the anonymous rate limit. Cluster pods reach it without auth at `docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000`. |
 | GitHub Runners | `services.github-runners = true` | - | Self-hosted ARC runners with Docker-in-Docker. Egress restricted via NetworkPolicy (see security notes below). |
 | Longhorn | `storage.longhorn.enable = true` | `longhorn.<sub>.<domain>` (opt-in) | Replicated block storage. Host prereqs on every node (open-iscsi + kernel modules) applied automatically. UI ingress is opt-in via `storage.longhorn.ingress`. |
 | Monitoring | `services.monitoring = true` | `grafana.<sub>.<domain>` (+ optional `prometheus.`, `alertmanager.`) | kube-prometheus-stack + Loki + Promtail. Scrapes kubelet, node-exporter, and smartctl_exporter. Dashboards loaded from ConfigMaps labelled `grafana_dashboard=1`. Prometheus/Alertmanager ingresses only created when `monitoring.<name>.middlewares` is non-empty. |
@@ -756,13 +796,12 @@ The initrd SSH server uses port 2222 by default (configurable via `sshPort`) and
 After the first install, enroll the TPM key:
 
 ```bash
-make ssh NODE=server1
-sudo systemd-cryptenroll /dev/disk/by-partlabel/disk-main-root \
-  --tpm2-device=auto \
-  --tpm2-pcrs=0+7
+make enroll-tpm NODE=server1
 ```
 
-The passphrase set during install remains as a fallback if TPM unlock fails (e.g. after a firmware update).
+The command SSHes into the node, reads the LUKS passphrase you set during install, and runs `systemd-cryptenroll` against `disk-main-root` bound to PCRs `0+7` (firmware + Secure Boot state). The passphrase you set during install stays as a fallback if TPM unlock fails (e.g. after a firmware update).
+
+Run it once per node. Subsequent reboots unlock without prompting.
 
 ### Comparison
 

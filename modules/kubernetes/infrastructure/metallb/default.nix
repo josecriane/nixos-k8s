@@ -2,11 +2,17 @@
   lib,
   pkgs,
   serverConfig,
+  clusterNodes,
   ...
 }:
 
 let
   k8s = import ../../lib.nix { inherit pkgs serverConfig; };
+  bootstrapNode =
+    let
+      b = lib.findFirst (n: n.bootstrap or false) null clusterNodes;
+    in
+    if b != null then b.name else throw "metallb: no bootstrap node found in clusterNodes";
 
   # MetalLB v0.14+ requires a memberlist secret for speaker pods. It must
   # exist before helm install, and we must NOT regenerate it on re-runs or
@@ -47,6 +53,7 @@ let
     substitutions = {
       POOL_START = serverConfig.metallbPoolStart;
       POOL_END = serverConfig.metallbPoolEnd;
+      BOOTSTRAP_NODE = bootstrapNode;
     };
     extraScript = ''
       echo "Waiting for MetalLB pods to be ready..."

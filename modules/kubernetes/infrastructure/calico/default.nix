@@ -57,6 +57,24 @@ let
         echo "Waiting for Calico pods... ($i/60, running: $READY)"
         sleep 5
       done
+
+      # Pin Felix to the nftables backend so its rules share the same table
+      # kube-proxy writes to. Kernel 6.18 (NixOS 26.05+) no longer ships the
+      # legacy ip_tables module; Felix's default "Auto" backend can still
+      # pick Legacy and end up with an independent empty table, which makes
+      # pod-to-Service DNAT silently drop (DNS and everything behind a
+      # ClusterIP stops working on agent nodes).
+      echo "Pinning Felix iptablesBackend=NFT..."
+      $KUBECTL patch felixconfiguration default --type=merge \
+        -p '{"spec":{"iptablesBackend":"NFT"}}' || \
+        $KUBECTL apply -f - <<FELIX
+      apiVersion: projectcalico.org/v3
+      kind: FelixConfiguration
+      metadata:
+        name: default
+      spec:
+        iptablesBackend: NFT
+      FELIX
     '';
   };
 in

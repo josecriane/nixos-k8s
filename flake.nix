@@ -112,6 +112,7 @@
           enroll-tpm = mkScriptApp "enroll-tpm" "${self}/scripts/enroll-tpm.sh";
           setup = mkScriptApp "setup" "${self}/scripts/setup.sh";
           add-node = mkScriptApp "add-node" "${self}/scripts/add-node.sh";
+          sync-bootstrap-secrets = mkScriptApp "sync-bootstrap-secrets" "${self}/scripts/sync-bootstrap-secrets.sh";
         };
 
       formatter.${system} = pkgs.nixfmt-tree;

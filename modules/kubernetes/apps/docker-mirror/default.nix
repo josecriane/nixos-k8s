@@ -3,11 +3,11 @@
 # config.nix:
 #   services.docker-mirror = true;
 #
-# Internal-only service, no external ingress. Accessed by pods in the cluster
-# via: http://docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000
-#
-# This URL is used automatically by the DinD sidecar in GitHub runners
-# (see modules/kubernetes/apps/github-runners).
+# Exposed externally at mirror.<subdomain>.<domain> behind BasicAuth
+# (reusing the registry htpasswd in registry-htpasswd.age) so CI pipelines
+# can `docker login` and pull/push-through cached images. Cluster pods keep
+# using the internal service URL:
+#   http://docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000
 #
 # secrets/docker-mirror-proxy.age:
 #   Two lines: username on line 1, password/token on line 2. Used to
@@ -15,6 +15,9 @@
 #   anonymous rate limits. Generate a token at
 #   https://hub.docker.com/settings/security and encrypt with:
 #     printf 'myuser\nmytoken\n' | agenix -e secrets/docker-mirror-proxy.age
+#
+# secrets/registry-htpasswd.age:
+#   Shared with the private docker-registry. Same users can log in to both.
 {
   config,
   lib,
@@ -35,6 +38,33 @@ let
   # anonymous pull-through) and overwrite it post-install with the real
   # values from agenix, then rollout-restart so pods pick them up.
   chartSecret = "docker-mirror-docker-registry-secret";
+
+  # Middleware + htpasswd Secret must exist BEFORE the IngressRoute that
+  # references them, otherwise Traefik reports the route as invalid.
+  preHelm = pkgs.writeShellScript "docker-mirror-pre-helm" ''
+    ${k8s.libShSource}
+    set -euo pipefail
+    wait_for_k3s
+    ensure_namespace container-mirror
+
+    echo "Creating htpasswd secret and BasicAuth middleware in container-mirror..."
+    HTPASSWD_CONTENT=$(cat "${config.age.secrets.registry-htpasswd.path}")
+    $KUBECTL create secret generic registry-htpasswd \
+      --namespace container-mirror \
+      --from-literal=users="$HTPASSWD_CONTENT" \
+      --dry-run=client -o yaml | $KUBECTL apply -f -
+
+    cat <<'MW' | $KUBECTL apply -f -
+    apiVersion: traefik.io/v1alpha1
+    kind: Middleware
+    metadata:
+      name: registry-auth
+      namespace: container-mirror
+    spec:
+      basicAuth:
+        secret: registry-htpasswd
+    MW
+  '';
 
   injectProxyCreds = ''
     echo "Injecting Docker Hub proxy credentials into ${chartSecret}..."
@@ -73,13 +103,31 @@ let
     version = "2.2.3";
     tier = "core";
     valuesFile = ./values.yaml;
+    ingress = {
+      host = "mirror";
+      service = "docker-mirror-docker-registry";
+      port = 5000;
+    };
+    middlewares = [
+      {
+        name = "registry-auth";
+        namespace = "container-mirror";
+      }
+    ];
     extraScript = injectProxyCreds;
   };
 in
-{
-  age.secrets.docker-mirror-proxy = {
-    file = "${secretsPath}/docker-mirror-proxy.age";
-  };
+lib.recursiveUpdate
+  {
+    age.secrets.docker-mirror-proxy = {
+      file = "${secretsPath}/docker-mirror-proxy.age";
+    };
+    age.secrets.registry-htpasswd = {
+      file = "${secretsPath}/registry-htpasswd.age";
+    };
 
-  systemd.services = release.systemd.services;
-}
+    systemd.services = release.systemd.services;
+  }
+  {
+    systemd.services.docker-mirror-setup.serviceConfig.ExecStartPre = "${preHelm}";
+  }
