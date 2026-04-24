@@ -23,7 +23,7 @@ let
         kind: Node
         name: ${n.name}'') clusterNodes;
 
-  manifest = pkgs.writeText "smartctl-exporter-scrape.yaml" ''
+  manifestText = ''
     apiVersion: v1
     kind: Service
     metadata:
@@ -88,7 +88,9 @@ let
               action: drop
   '';
 
-  configHash = builtins.hashString "sha256" (builtins.readFile manifest);
+  manifest = pkgs.writeText "smartctl-exporter-scrape.yaml" manifestText;
+
+  configHash = builtins.hashString "sha256" manifestText;
 in
 {
   systemd.services.smartctl-exporter-scrape-setup = {

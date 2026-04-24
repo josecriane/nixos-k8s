@@ -218,8 +218,12 @@ ssh-add -L 2>/dev/null | grep "nixos-anywhere" | while read -r key; do
   rm -f "$keyfile"
 done
 
-# After reboot, the node uses its static IP from config.nix
-FINAL_IP=$(grep -A5 "\"${NODE}\"" "$CONFIG_FILE" | grep 'ip =' | sed 's/.*"\(.*\)".*/\1/' | head -1)
+# After reboot, the node uses its static IP from config.nix.
+# Nodes are declared in `config.nix` as unquoted attribute keys
+# (e.g. `rosalia = { ... }`), not as quoted strings, so match
+# `<space>*<node><space>*=` to locate the block.
+NODE_BLOCK_RE="^[[:space:]]*${NODE}[[:space:]]*="
+FINAL_IP=$(grep -A5 -E "$NODE_BLOCK_RE" "$CONFIG_FILE" | grep 'ip =' | sed 's/.*"\(.*\)".*/\1/' | head -1 || true)
 FINAL_IP="${FINAL_IP:-$NODE_IP}"
 
 # Clean known_hosts for both IPs
@@ -227,8 +231,8 @@ ssh-keygen -R "$NODE_IP" 2>/dev/null || true
 ssh-keygen -R "$FINAL_IP" 2>/dev/null || true
 
 # Check if node has encryption with SSH unlock
-HAS_SSH_UNLOCK=$(grep -A10 "\"${NODE}\"" "$CONFIG_FILE" | grep -c 'unlock.*=.*"ssh"' || true)
-UNLOCK_PORT=$(grep -A10 "\"${NODE}\"" "$CONFIG_FILE" | grep 'sshPort' | sed 's/[^0-9]//g' | head -1)
+HAS_SSH_UNLOCK=$(grep -A10 -E "$NODE_BLOCK_RE" "$CONFIG_FILE" | grep -c 'unlock.*=.*"ssh"' || true)
+UNLOCK_PORT=$(grep -A10 -E "$NODE_BLOCK_RE" "$CONFIG_FILE" | grep 'sshPort' | sed 's/[^0-9]//g' | head -1 || true)
 UNLOCK_PORT="${UNLOCK_PORT:-2222}"
 
 SSH_OPTS=(-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes)

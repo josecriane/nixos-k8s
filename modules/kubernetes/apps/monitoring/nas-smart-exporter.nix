@@ -25,7 +25,7 @@ let
     - ip: ${n.ip}
       hostname: ${n.hostname or n.name}'') enabledNas;
 
-  manifest = pkgs.writeText "nas-smartctl-exporter-scrape.yaml" ''
+  manifestText = ''
     apiVersion: v1
     kind: Service
     metadata:
@@ -80,7 +80,9 @@ let
               targetLabel: instance
   '';
 
-  configHash = builtins.hashString "sha256" (builtins.readFile manifest);
+  manifest = pkgs.writeText "nas-smartctl-exporter-scrape.yaml" manifestText;
+
+  configHash = builtins.hashString "sha256" manifestText;
 in
 lib.optionalAttrs enabled {
   systemd.services.nas-smartctl-exporter-scrape-setup = {

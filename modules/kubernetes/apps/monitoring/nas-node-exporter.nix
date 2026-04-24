@@ -25,7 +25,7 @@ let
     - ip: ${n.ip}
       hostname: ${n.hostname or n.name}'') enabledNas;
 
-  manifest = pkgs.writeText "nas-node-exporter-scrape.yaml" ''
+  manifestText = ''
     apiVersion: v1
     kind: Service
     metadata:
@@ -82,7 +82,9 @@ let
               replacement: nas-node-exporter
   '';
 
-  configHash = builtins.hashString "sha256" (builtins.readFile manifest);
+  manifest = pkgs.writeText "nas-node-exporter-scrape.yaml" manifestText;
+
+  configHash = builtins.hashString "sha256" manifestText;
 in
 lib.optionalAttrs enabled {
   systemd.services.nas-node-exporter-scrape-setup = {

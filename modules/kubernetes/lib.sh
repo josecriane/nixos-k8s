@@ -95,12 +95,21 @@ wait_for_k3s() {
     exit 1
   fi
 
-  echo "Waiting for node to become Ready..."
-  if ! $KUBECTL wait --for=condition=Ready node --all --timeout=300s; then
-    echo "ERROR: Node did not reach Ready state within 5 minutes"
-    exit 1
+  # Skip the Ready wait for CNI bootstrap: the CNI installer (e.g. Calico
+  # via tigera-operator) runs inside a *-setup.service that itself calls
+  # wait_for_k3s. The node cannot become Ready without a CNI, so waiting
+  # here would deadlock the first boot. Callers that need a Ready node
+  # should use wait_for_deployment/wait_for_pod for their own workload.
+  if [ "${SKIP_NODE_READY:-}" = "1" ]; then
+    echo "SKIP_NODE_READY=1 set, not waiting for node Ready"
+  else
+    echo "Waiting for node to become Ready..."
+    if ! $KUBECTL wait --for=condition=Ready node --all --timeout=300s; then
+      echo "ERROR: Node did not reach Ready state within 5 minutes"
+      exit 1
+    fi
+    echo "Node is Ready (CNI initialized)"
   fi
-  echo "Node is Ready (CNI initialized)"
 
   if [ "${K8S_CNI:-flannel}" = "flannel" ]; then
     echo "Waiting for Flannel subnet.env..."

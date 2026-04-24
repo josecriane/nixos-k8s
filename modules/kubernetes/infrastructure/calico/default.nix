@@ -70,6 +70,10 @@ lib.recursiveUpdate release {
       "kube-apiserver.service"
       "k3s.service"
     ];
+    # tigera-operator is the CNI installer itself. On first boot the node
+    # is NotReady until Calico is rolled out, so wait_for_k3s must skip the
+    # Ready check. Subsequent runs are no-ops thanks to the marker hash.
+    environment.SKIP_NODE_READY = "1";
     serviceConfig.ExecStartPre = "${preHelm}";
   };
 }
