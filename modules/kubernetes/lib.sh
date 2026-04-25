@@ -418,22 +418,24 @@ helm_install() {
   local timeout="$4"
   shift 4
 
-  local set_flags=""
+  # Bash array preserves values with spaces (e.g. CIDR lists, comma-separated
+  # config). A plain string would word-split during command expansion.
+  local -a set_flags=()
   for kv in "$@"; do
-    set_flags="$set_flags --set $kv"
+    set_flags+=(--set "$kv")
   done
 
   if ! $HELM upgrade --install "$name" "$chart" \
     --namespace "$namespace" \
     --create-namespace \
-    $set_flags \
+    "${set_flags[@]}" \
     --wait \
     --timeout "$timeout" 2>&1; then
     echo "Helm upgrade failed, retrying with --force..."
     $HELM upgrade --install "$name" "$chart" \
       --namespace "$namespace" \
       --create-namespace \
-      $set_flags \
+      "${set_flags[@]}" \
       --wait \
       --force \
       --timeout "$timeout"
@@ -452,12 +454,14 @@ get_secret_value() {
 store_credentials() {
   local ns="$1" secret_name="$2"
   shift 2
-  local literal_args=""
+  # Array preserves values with spaces or shell metacharacters (e.g. OIDC
+  # role-attribute expressions). A flat string would word-split.
+  local -a literal_args=()
   for kv in "$@"; do
-    literal_args="$literal_args --from-literal=$kv"
+    literal_args+=("--from-literal=$kv")
   done
   $KUBECTL create secret generic "$secret_name" \
-    --namespace "$ns" $literal_args \
+    --namespace "$ns" "${literal_args[@]}" \
     --dry-run=client -o yaml | $KUBECTL apply -f -
   $KUBECTL label secret "$secret_name" -n "$ns" k8s/credential=true --overwrite 2>/dev/null || true
 }
