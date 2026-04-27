@@ -16,6 +16,9 @@ let
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
   cni = k8sCfg.cni or "flannel";
+  # certmgr renewal check interval (Go duration string). See the comment
+  # next to services.certmgr below for why we override certmgr's 30m default.
+  certRenewInterval = k8sCfg.certRenewInterval or "24h";
 
   isServer = nodeConfig.role == "server";
   isAgent = nodeConfig.role == "agent";
@@ -152,6 +155,32 @@ in
     };
 
     clusterCidr = podCidr;
+  };
+
+  # certmgr (started by services.kubernetes with easyCerts) checks every 30m
+  # by default and falsely re-renews internal control-plane certs because of
+  # an upstream bug in cert/verification.go:CertificateMatchesHostname: the
+  # comparator only inspects cert.DNSNames + cert.IPAddresses when checking
+  # against spec.request.hosts. cfssl encodes hosts containing ':' (e.g.
+  # `system:node:<host>`, `system:service-account-signer`) as SAN URIs and
+  # certmgr never reads URIs back, so every check the comparator disagrees
+  # with the (correctly written) cert and renews. Each cascade restarts
+  # kube-apiserver, kube-controller-manager, kube-scheduler, kube-proxy,
+  # kube-addon-manager and kubelet, knocks the API offline and makes ARC
+  # kill in-flight runner pods.
+  #
+  # Tracking: cloudflare/certmgr#125 (PR open since 2024, no merge),
+  # NixOS/nixpkgs#434442 (issue open since 2025). Both unresolved; the
+  # certmgr repo is on minimal maintenance.
+  #
+  # Mitigation: bump the renewal check interval. Default here is 24h (one
+  # cascade/day, low impact); override via
+  # serverConfig.kubernetes.certRenewInterval to trade safety margin for
+  # uptime (e.g. "2160h" for 4 cascades/year). Cert lifetimes are 365d, so
+  # even a 90-day interval still catches real expiry within validMin (72h
+  # default) margin before certs die.
+  services.certmgr = lib.mkIf isServer {
+    renewInterval = certRenewInterval;
   };
 
   # Container workloads spawned by containerd (DinD sidecars, databases in CI)
