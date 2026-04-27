@@ -21,13 +21,7 @@ template:
             value: "1.43"
           - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
             value: "120"
-        resources:
-          requests:
-            cpu: 500m
-            memory: 1Gi
-          limits:
-            cpu: "2"
-            memory: 6Gi
+        resources: __RUNNER_RESOURCES__
         volumeMounts:
           - name: work
             mountPath: /home/runner/_work
@@ -46,13 +40,7 @@ template:
             value: "123"
         securityContext:
           privileged: true
-        resources:
-          requests:
-            cpu: 250m
-            memory: 512Mi
-          limits:
-            cpu: "1"
-            memory: 2Gi
+        resources: __DIND_RESOURCES__
         volumeMounts:
           - name: work
             mountPath: /home/runner/_work

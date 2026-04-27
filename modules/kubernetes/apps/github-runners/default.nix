@@ -11,6 +11,19 @@
 #       appId = 1234567;
 #       installationId = 87654321;
 #     };
+#     # Optional per-container resources. Defaults are conservative; bump for
+#     # heavy builds (e.g. Android/Kotlin). Each block accepts standard k8s
+#     # resources (requests/limits with cpu/memory).
+#     # resources = {
+#     #   runner = {
+#     #     requests = { cpu = "1"; memory = "4Gi"; };
+#     #     limits = { cpu = "4"; memory = "16Gi"; };
+#     #   };
+#     #   dind = {
+#     #     requests = { cpu = "500m"; memory = "1Gi"; };
+#     #     limits = { cpu = "2"; memory = "6Gi"; };
+#     #   };
+#     # };
 #   };
 #
 # Authentication:
@@ -35,6 +48,30 @@ let
   # GitHub App auth is preferred. Fall back to PAT only if githubApp not configured.
   githubApp = ghConfig.githubApp or null;
   useGithubApp = githubApp != null;
+
+  resourcesCfg = ghConfig.resources or { };
+  runnerResources =
+    resourcesCfg.runner or {
+      requests = {
+        cpu = "500m";
+        memory = "1Gi";
+      };
+      limits = {
+        cpu = "2";
+        memory = "6Gi";
+      };
+    };
+  dindResources =
+    resourcesCfg.dind or {
+      requests = {
+        cpu = "250m";
+        memory = "512Mi";
+      };
+      limits = {
+        cpu = "1";
+        memory = "2Gi";
+      };
+    };
 
   mirrorEnabled = (serverConfig.services or { }).docker-mirror or false;
   # Internal cluster DNS for the mirror (no external ingress)
@@ -82,6 +119,8 @@ let
       MAX_RUNNERS = maxRunners;
       RUNNER_NAME = runnerName;
       HOST_ALIASES = hostAliasesJson;
+      RUNNER_RESOURCES = builtins.toJSON runnerResources;
+      DIND_RESOURCES = builtins.toJSON dindResources;
     };
     extraScript = ''
       # Create GitHub auth secret (App or PAT)
