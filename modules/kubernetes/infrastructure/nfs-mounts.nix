@@ -103,22 +103,33 @@ in
     ) { } secondaryNasList
   );
 
-  # Auto-heal stale NFS handles: NAS reboots leave cached file handles invalid
-  # on the client side, surfacing as "Stale file handle" on stat/mkdir. A periodic
-  # check stats each NFS mount with a short timeout and restarts its mount unit
-  # on failure. Only enabled when NFS storage is in use.
+  # Auto-heal NFS mounts. Two failure modes are covered:
+  #   1. Stale handles: a NAS reboot leaves cached file handles invalid on the
+  #      client, surfacing as "Stale file handle" on stat/mkdir. We stat each
+  #      active NFS mount with a short timeout and restart its unit on failure.
+  #   2. Failed mount units: if the NAS is unreachable while systemd tries to
+  #      mount (e.g. the NAS rebooted and the autofs trigger fired before the
+  #      server was answering), the mount unit ends up in 'failed' state and
+  #      systemd doesn't retry on its own. Bind mounts that depend on it stay
+  #      down too. We reset-failed + start each failed mount under /mnt so the
+  #      next NAS-up window picks them back up automatically.
+  # Only enabled when NFS storage is in use.
   systemd.services.nfs-heal = lib.mkIf useNFS {
-    description = "Detect and heal stale NFS mounts";
+    description = "Detect and heal stale or failed NFS mounts";
     serviceConfig = {
       Type = "oneshot";
     };
     path = [
       pkgs.util-linux
       pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.gawk
       pkgs.systemd
     ];
     script = ''
       set -u
+
+      # 1. Stale NFS handles on currently-mounted NFS paths.
       findmnt -l -t nfs,nfs4 -n -o TARGET | while read -r target; do
         case "$target" in /mnt/*) ;; *) continue ;; esac
         if ! timeout 3 stat "$target" >/dev/null 2>&1; then
@@ -127,6 +138,22 @@ in
           systemctl restart "$unit" || echo "  failed to restart $unit"
         fi
       done
+
+      # 2. Failed mount units under /mnt (NFS or bind mounts that depend on
+      # NFS). Capture the list before we reset-failed, since reset clears the
+      # state we filter on. systemd resolves RequiresMountsFor when each is
+      # started, so order within the list doesn't matter.
+      failed_mounts=$(systemctl --failed --type=mount --no-legend --plain \
+        --no-pager 2>/dev/null | awk '{print $1}' | grep '^mnt-' || true)
+      if [ -n "$failed_mounts" ]; then
+        echo "$failed_mounts" | while read -r unit; do
+          [ -z "$unit" ] && continue
+          echo "Failed mount unit: $unit, resetting and starting"
+          systemctl reset-failed "$unit" 2>/dev/null || true
+          systemctl start --no-block "$unit" || \
+            echo "  failed to start $unit"
+        done
+      fi
     '';
   };
 
