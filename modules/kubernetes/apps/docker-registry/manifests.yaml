@@ -16,6 +16,21 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # /v2/ discovery endpoint must require auth so docker clients negotiate
+    # credentials before subsequent push requests. Returning 200 anonymously
+    # here makes docker assume the registry is fully open and skip sending
+    # Authorization in POST /v2/<name>/blobs/uploads/, breaking push.
+    - match: Host(`registry.__SUBDOMAIN__.__DOMAIN__`) && Path(`/v2/`)
+      kind: Rule
+      priority: 200
+      middlewares:
+        - name: hsts-headers
+          namespace: traefik-system
+        - name: registry-auth
+          namespace: container-registry
+      services:
+        - name: docker-registry
+          port: 5000
     - match: Host(`registry.__SUBDOMAIN__.__DOMAIN__`) && (Method(`GET`) || Method(`HEAD`))
       kind: Rule
       priority: 100
