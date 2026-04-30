@@ -203,21 +203,25 @@ rec {
 
       setsFlags = builtins.concatStringsSep " " (map (s: "--set ${s}") sets);
 
-      # Build the values file flag: convert JSON to YAML at runtime
+      # Values precedence (low → high):
+      #   1. valuesFile (static YAML, optionally token-substituted)
+      #   2. values (Nix attrs, converted to JSON → YAML at runtime)
+      # When both are passed, helm merges them via two `-f` flags (last wins).
       valuesFlag =
-        if values != { } then
-          ''
-            VALUES_FILE=$(mktemp /tmp/${name}-values-XXXXXX.yaml)
-            $YQ -P '.' ${valuesFileNix} > "$VALUES_FILE"
-          ''
-        else if renderedValuesFile != null then
-          ''VALUES_FILE="${renderedValuesFile}"''
-        else
-          "";
+        (pkgs.lib.optionalString (renderedValuesFile != null) ''
+          VALUES_BASE_FILE="${renderedValuesFile}"
+        '')
+        + (pkgs.lib.optionalString (values != { }) ''
+          VALUES_OVERRIDE_FILE=$(mktemp /tmp/${name}-values-XXXXXX.yaml)
+          $YQ -P '.' ${valuesFileNix} > "$VALUES_OVERRIDE_FILE"
+        '');
 
-      valuesFlagArg = if values != { } || renderedValuesFile != null then "-f \"$VALUES_FILE\"" else "";
+      valuesFlagArg = pkgs.lib.concatStringsSep " " (
+        pkgs.lib.optional (renderedValuesFile != null) ''-f "$VALUES_BASE_FILE"''
+        ++ pkgs.lib.optional (values != { }) ''-f "$VALUES_OVERRIDE_FILE"''
+      );
 
-      cleanupValues = if values != { } then ''rm -f "$VALUES_FILE"'' else "";
+      cleanupValues = pkgs.lib.optionalString (values != { }) ''rm -f "$VALUES_OVERRIDE_FILE"'';
 
       ingressScript =
         if ingress != null then

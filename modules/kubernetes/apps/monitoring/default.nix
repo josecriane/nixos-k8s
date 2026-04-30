@@ -19,6 +19,23 @@
 # If prometheus/alertmanager middlewares are empty, their ingresses are NOT
 # created (safer default, since they have no built-in auth). Toggling the list
 # back to empty after a deploy also removes any previously-created IngressRoute.
+#
+# Optional component toggles (default true to preserve historical behavior):
+#   monitoring.loki.enable     = false;  # don't install loki helm release
+#   monitoring.promtail.enable = false;  # don't install promtail helm release
+#
+# Optional Grafana Cloud integration (Prometheus remote_write):
+#   monitoring.grafanaCloud = {
+#     enable = true;
+#     prometheus = {
+#       remoteWriteUrl   = "https://prometheus-prod-XX-prod-YY.grafana.net/api/prom/push";
+#       existingSecret   = "grafana-cloud-prometheus";  # must have keys: username, password
+#       metricsAllowlist = [ "node_cpu_seconds_total" "kube_pod_info" ... ]; # [] = forward all
+#       retention        = "1d";  # override local TSDB retention (default keeps existing)
+#     };
+#   };
+# The K8s Secret named in `existingSecret` must be created out-of-band (e.g.
+# downstream, from agenix). Helm/Prometheus only reference it.
 {
   config,
   lib,
@@ -45,6 +62,53 @@ let
   # Optional StorageClass override for every monitoring PVC. Unset = use the
   # cluster default SC (k3s local-path, Longhorn if set as default, etc.).
   storageClass = monCfg.storageClass or null;
+
+  # Component toggles. Default true preserves the historical behavior of
+  # always installing Loki + Promtail alongside kube-prometheus-stack.
+  lokiEnable = monCfg.loki.enable or true;
+  promtailEnable = monCfg.promtail.enable or true;
+
+  # Grafana Cloud Prometheus remote_write (off by default).
+  gcCfg = monCfg.grafanaCloud or { };
+  gcEnable = gcCfg.enable or false;
+  gcPromCfg = gcCfg.prometheus or { };
+  gcPromUrl = gcPromCfg.remoteWriteUrl or "";
+  gcPromSecret = gcPromCfg.existingSecret or "grafana-cloud-prometheus";
+  gcPromAllowlist = gcPromCfg.metricsAllowlist or [ ];
+  gcPromRetention = gcPromCfg.retention or null;
+
+  remoteWriteEntry = {
+    url = gcPromUrl;
+    basicAuth = {
+      username = {
+        name = gcPromSecret;
+        key = "username";
+      };
+      password = {
+        name = gcPromSecret;
+        key = "password";
+      };
+    };
+  }
+  // pkgs.lib.optionalAttrs (gcPromAllowlist != [ ]) {
+    writeRelabelConfigs = [
+      {
+        sourceLabels = [ "__name__" ];
+        regex = builtins.concatStringsSep "|" gcPromAllowlist;
+        action = "keep";
+      }
+    ];
+  };
+
+  # Helm values to layer on top of values-kps.yaml when grafanaCloud is on.
+  kpsCloudValues = pkgs.lib.optionalAttrs (gcEnable && gcPromUrl != "") {
+    prometheus.prometheusSpec = {
+      remoteWrite = [ remoteWriteEntry ];
+    }
+    // pkgs.lib.optionalAttrs (gcPromRetention != null) {
+      retention = gcPromRetention;
+    };
+  };
 
   kpsStorageSets = lib.optionals (storageClass != null) [
     "grafana.persistence.storageClassName=${storageClass}"
@@ -132,6 +196,7 @@ let
     };
     chart = "prometheus-community/kube-prometheus-stack";
     valuesFile = ./values-kps.yaml;
+    values = kpsCloudValues;
     sets = kpsStorageSets;
     # node-exporter DaemonSet uses hostPath/hostNetwork/hostPID.
     pssLevel = "privileged";
@@ -179,10 +244,84 @@ let
     # Promtail DaemonSet needs hostPath + privileged to read /var/log.
     pssLevel = "privileged";
   };
+
+  # When a component is disabled but its helm release was previously installed,
+  # we need to actively uninstall it instead of just skipping the install.
+  # This module emits a `<name>-setup` oneshot service whose ExecStart helm-
+  # uninstalls the release if present, so toggling enable=false on a running
+  # cluster cleanly removes the workload on the next deploy.
+  uninstallService =
+    {
+      name,
+      tier ? "core",
+      extraCleanup ? "",
+    }:
+    let
+      targetName = "k3s-${tier}";
+      prevTarget =
+        {
+          infrastructure = null;
+          storage = "infrastructure";
+          core = "storage";
+          apps = "core";
+          extras = "apps";
+        }
+        .${tier} or null;
+      script = pkgs.writeShellScript "${name}-uninstall" ''
+        set -e
+        export KUBECONFIG=${
+          if (serverConfig.kubernetes.engine or "k3s") == "k3s" then
+            "/etc/rancher/k3s/k3s.yaml"
+          else
+            "/etc/kubernetes/cluster-admin.kubeconfig"
+        }
+        KUBECTL=${pkgs.kubectl}/bin/kubectl
+        HELM=${pkgs.kubernetes-helm}/bin/helm
+
+        if $HELM list -n ${ns} --short 2>/dev/null | grep -qx ${name}; then
+          echo "${name} helm release present, uninstalling (disabled in monitoring config)..."
+          $HELM uninstall ${name} -n ${ns} --wait --timeout=120s || true
+        else
+          echo "${name} not installed, nothing to do"
+        fi
+
+        ${extraCleanup}
+
+        echo "${name} reconciliation complete"
+      '';
+    in
+    {
+      systemd.services."${name}-setup" = {
+        description = "Reconcile ${name} (disabled in monitoring config)";
+        after = [ "k3s.service" ] ++ pkgs.lib.optional (prevTarget != null) "${prevTarget}.target";
+        requires = [ "k3s.service" ];
+        wantedBy = [ "${targetName}.target" ];
+        before = [ "${targetName}.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = script;
+        };
+      };
+    };
+
+  lokiUninstall = uninstallService {
+    name = "loki";
+    extraCleanup = ''
+      $KUBECTL -n ${ns} delete pvc storage-loki-0 --ignore-not-found --timeout=30s || true
+    '';
+  };
+
+  promtailUninstall = uninstallService {
+    name = "promtail";
+  };
+
+  lokiBlock = if lokiEnable then loki else lokiUninstall;
+  promtailBlock = if promtailEnable then promtail else promtailUninstall;
 in
 lib.recursiveUpdate
   (builtins.foldl' lib.recursiveUpdate kps [
-    loki
+    lokiBlock
     dashboardsModule
     smartExporterModule
     nasSmartExporterModule
@@ -190,18 +329,18 @@ lib.recursiveUpdate
     nodeExporterRelabelModule
   ])
   (
-    lib.recursiveUpdate promtail {
+    lib.recursiveUpdate promtailBlock {
       systemd.services.kube-prometheus-stack-setup = {
         serviceConfig.ExecStartPre = "${preHelmKps}";
       };
       systemd.services.loki-setup = {
-        after = (loki.systemd.services.loki-setup.after or [ ]) ++ [
+        after = (lokiBlock.systemd.services.loki-setup.after or [ ]) ++ [
           "kube-prometheus-stack-setup.service"
         ];
         wants = [ "kube-prometheus-stack-setup.service" ];
       };
       systemd.services.promtail-setup = {
-        after = (promtail.systemd.services.promtail-setup.after or [ ]) ++ [
+        after = (promtailBlock.systemd.services.promtail-setup.after or [ ]) ++ [
           "loki-setup.service"
         ];
         wants = [ "loki-setup.service" ];
