@@ -25,6 +25,14 @@ let
   isBootstrap = nodeConfig.bootstrap or false;
   isHA = builtins.length (builtins.filter (n: n.role == "server") clusterNodes) > 1;
 
+  # Kubelet resource reservations protect the OS + control plane from being
+  # starved by application pods (in particular CI runners doing parallel
+  # builds). Defaults are conservative for small nodes; bump per-node via
+  # `nodeConfig.kubelet.{systemReserved,kubeReserved}` in config.nix.
+  kubeletCfg = nodeConfig.kubelet or { };
+  systemReserved = kubeletCfg.systemReserved or "cpu=500m,memory=512Mi";
+  kubeReserved = kubeletCfg.kubeReserved or "cpu=500m,memory=512Mi";
+
   kubeconfigPath = "/etc/kubernetes/cluster-admin.kubeconfig";
 
   # Bootstrap CA + apitoken come from the master and need to be on disk
@@ -93,8 +101,8 @@ in
       enable = true;
       extraOpts = builtins.concatStringsSep " " [
         "--node-ip=${nodeConfig.ip}"
-        "--system-reserved=cpu=500m,memory=512Mi"
-        "--kube-reserved=cpu=500m,memory=512Mi"
+        "--system-reserved=${systemReserved}"
+        "--kube-reserved=${kubeReserved}"
         "--eviction-hard=memory.available<256Mi,nodefs.available<10%"
       ];
       kubeconfig = {
@@ -191,6 +199,23 @@ in
     LimitNOFILE = "infinity";
     LimitNOFILESoft = "infinity";
     LimitNPROC = "infinity";
+  };
+
+  # cgroup priority for the control plane. Under contention from application
+  # pods (e.g. parallel ARC runners with DinD builds saturating the NVMe),
+  # etcd fsyncs can be delayed enough to cancel apiserver gRPC contexts and
+  # cascade kubelet probe timeouts; sustained pressure has been observed
+  # ending in kernel lockup with no shutdown signal. CPUWeight + Nice raise
+  # scheduler priority unconditionally; IOWeight only takes effect with a
+  # cgroup-v2 aware I/O scheduler (bfq, mq-deadline) — harmless otherwise.
+  systemd.services.etcd.serviceConfig = lib.mkIf isServer {
+    IOWeight = 1000;
+    CPUWeight = 1000;
+    Nice = -10;
+  };
+  systemd.services.kube-apiserver.serviceConfig = lib.mkIf isServer {
+    IOWeight = 800;
+    CPUWeight = 800;
   };
 
   # kube-proxy in nftables mode shells out to the `nft` binary. The default
