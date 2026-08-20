@@ -60,6 +60,8 @@
   #     appId = 1234567;
   #     installationId = 87654321;
   #   };
+  #   # Optional per-node runner cap (slot counts should sum to maxRunners).
+  #   # nodeSlots = { server1 = 3; worker1 = 2; };
   # };
 
   # NAS integration
