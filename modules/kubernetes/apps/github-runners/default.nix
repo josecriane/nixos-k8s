@@ -24,6 +24,13 @@
 #     #     limits = { cpu = "2"; memory = "6Gi"; };
 #     #   };
 #     # };
+#     # Optional per-node runner cap. Maps node name -> max runners on that
+#     # node, enforced with a scheduler-visible extended resource
+#     # (<domain>/runner-slot): each runner pod claims one slot and each listed
+#     # node advertises its slot capacity, so the scheduler never places more
+#     # runners on a node than its cap. Leave unset to let runners schedule
+#     # freely up to maxRunners. The slot counts should sum to maxRunners.
+#     # nodeSlots = { server1 = 5; worker1 = 3; };
 #   };
 #
 # Authentication:
@@ -44,6 +51,10 @@ let
   githubConfigUrl = ghConfig.configUrl or "";
   maxRunners = ghConfig.maxRunners or 5;
   runnerName = ghConfig.runnerName or "self-hosted-linux";
+  nodeSlots = ghConfig.nodeSlots or { };
+  slotsEnabled = nodeSlots != { };
+  slotResource = "${serverConfig.domain}/runner-slot";
+  slotResourcePointer = builtins.replaceStrings [ "~" "/" ] [ "~0" "~1" ] slotResource;
 
   # GitHub App auth is preferred. Fall back to PAT only if githubApp not configured.
   githubApp = ghConfig.githubApp or null;
@@ -72,6 +83,36 @@ let
         memory = "2Gi";
       };
     };
+
+  # When per-node slots are enabled, the runner container claims one slot.
+  # Extended resources cannot be overcommitted, so request must equal limit.
+  runnerResourcesFinal =
+    if slotsEnabled then
+      lib.recursiveUpdate runnerResources {
+        requests.${slotResource} = "1";
+        limits.${slotResource} = "1";
+      }
+    else
+      runnerResources;
+
+  # Advertise slot capacity on each node's status. Runs from the bootstrap
+  # node (where this setup service lives) after all nodes are Ready, so the
+  # patches land on registered nodes. `add` is idempotent (replaces if present).
+  # Capacity persists in etcd across reboots; this re-applies whenever the
+  # runner-set config hash changes (e.g. nodeSlots edited).
+  slotAdvertiseScript = lib.optionalString slotsEnabled (
+    ''
+
+      echo "Advertising ${slotResource} capacity per node..."
+    ''
+    + lib.concatStrings (
+      lib.mapAttrsToList (node: count: ''
+        $KUBECTL patch node ${node} --subresource=status --type=json \
+          -p '[{"op":"add","path":"/status/capacity/${slotResourcePointer}","value":"${toString count}"}]' \
+          || echo "WARN: could not advertise ${slotResource} on node ${node}"
+      '') nodeSlots
+    )
+  );
 
   mirrorEnabled = (serverConfig.services or { }).docker-mirror or false;
   # Internal cluster DNS for the mirror (no external ingress)
@@ -119,7 +160,7 @@ let
       MAX_RUNNERS = maxRunners;
       RUNNER_NAME = runnerName;
       HOST_ALIASES = hostAliasesJson;
-      RUNNER_RESOURCES = builtins.toJSON runnerResources;
+      RUNNER_RESOURCES = builtins.toJSON runnerResourcesFinal;
       DIND_RESOURCES = builtins.toJSON dindResources;
     };
     extraScript = ''
@@ -178,7 +219,7 @@ let
           --docker-password="unused" \
           --dry-run=client -o yaml | $KUBECTL apply -f -
       fi
-
+      ${slotAdvertiseScript}
     '';
   };
 in
