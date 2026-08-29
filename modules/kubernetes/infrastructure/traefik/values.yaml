@@ -15,11 +15,10 @@ ingressClass:
 ingressRoute:
   dashboard:
     enabled: false
-logs:
-  general:
-    level: INFO
-  access:
-    enabled: true
+log:
+  level: INFO
+accessLog:
+  enabled: true
 providers:
   kubernetesCRD:
     enabled: true
