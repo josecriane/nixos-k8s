@@ -154,6 +154,29 @@ in
             echo "  failed to start $unit"
         done
       fi
+
+      # 3. Declared bind mounts that are simply inactive rather than failed.
+      # A bind onto an automounted NAS path that is not up yet can give up
+      # without ever reaching 'failed', and then nothing retries it. The
+      # underlying directory still exists, so anything writing there lands on
+      # the wrong disk silently. Only bind mounts are considered: the NFS
+      # mounts themselves are automounts and are meant to sit inactive.
+      # The unit fragment is read rather than the runtime Options property:
+      # once a bind of an NFS path is active, systemd reports the underlying
+      # NFS options and the 'bind' flag is no longer visible.
+      inactive_binds=$(systemctl list-units --type=mount --all --state=inactive \
+        --no-legend --plain --no-pager 2>/dev/null | awk '{print $1}' | grep '^mnt-' || true)
+      if [ -n "$inactive_binds" ]; then
+        echo "$inactive_binds" | while read -r unit; do
+          [ -z "$unit" ] && continue
+          frag=$(systemctl show -p FragmentPath --value "$unit" 2>/dev/null)
+          [ -n "$frag" ] && [ -f "$frag" ] || continue
+          grep -qE '^Options=.*[=,]bind(,|$)' "$frag" || continue
+          echo "Inactive bind mount: $unit, starting"
+          systemctl start --no-block "$unit" || \
+            echo "  failed to start $unit"
+        done
+      fi
     '';
   };
 
