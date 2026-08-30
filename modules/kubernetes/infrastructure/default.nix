@@ -55,5 +55,8 @@ in
   # Helm release on bootstrap only — guarded inside the module)
   ++ lib.optionals longhornEnabled [
     ./longhorn
+  ]
+  ++ lib.optionals (isBootstrap && (serverConfig.gc.enable or false)) [
+    ./gc.nix
   ];
 }
