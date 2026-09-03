@@ -1,8 +1,9 @@
 # Shared helpers for Kubernetes modules
-# Usage: let k8s = import ./lib.nix { inherit pkgs serverConfig; }; in ...
+# Provided to every module as the `k8s` argument (see specialArgs in flake.nix).
 { pkgs, serverConfig }:
 
 let
+
   kubectl = "${pkgs.kubectl}/bin/kubectl";
   helm = "${pkgs.kubernetes-helm}/bin/helm";
   jq = "${pkgs.jq}/bin/jq";
@@ -14,11 +15,24 @@ let
   certSecret = "wildcard-${subdomain}-${domain}-tls";
 
   k8sCfg = serverConfig.kubernetes or { };
-  engine = k8sCfg.engine or "k3s";
+  engine = k8sCfg.engine;
   kubeconfigPath =
     if engine == "k3s" then "/etc/rancher/k3s/k3s.yaml" else "/etc/kubernetes/cluster-admin.kubeconfig";
 in
 rec {
+  primaryNas =
+    let
+      enabled = pkgs.lib.filterAttrs (_: cfg: cfg.enabled or false) (serverConfig.nas or { });
+      withNames = pkgs.lib.mapAttrsToList (name: cfg: cfg // { inherit name; }) enabled;
+    in
+    pkgs.lib.findFirst (
+      cfg: (cfg.role or "all") == "media" || (cfg.role or "all") == "all"
+    ) null withNames;
+
+  nasMountPointOf = cfg: "/mnt/${cfg.hostname or cfg.name}";
+
+  primaryNasMountPoint = if primaryNas != null then nasMountPointOf primaryNas else "/mnt/nas";
+
   # ============================================
   # LIB.SH SOURCE (exports env vars + sources lib.sh)
   # ============================================
@@ -60,8 +74,8 @@ rec {
   # Creates a systemd service that deploys a Helm chart.
   #
   # Usage in a module:
-  #   { config, lib, pkgs, serverConfig, ... }:
-  #   let k8s = import ../lib.nix { inherit pkgs serverConfig; }; in
+  #   { k8s, config, lib, pkgs, ... }:
+
   #   k8s.createHelmRelease {
   #     name = "argocd";
   #     namespace = "argo-cd";
@@ -83,9 +97,9 @@ rec {
     name: yamlFile: extra:
     let
       common = {
-        TIMEZONE = serverConfig.timezone or "UTC";
-        PUID = toString (serverConfig.puid or 1000);
-        PGID = toString (serverConfig.pgid or 1000);
+        TIMEZONE = serverConfig.timezone;
+        PUID = toString (serverConfig.puid);
+        PGID = toString (serverConfig.pgid);
         DOMAIN = domain;
         SUBDOMAIN = subdomain;
       };
@@ -350,8 +364,8 @@ rec {
       },
     }:
     let
-      puid = toString (serverConfig.puid or 1000);
-      pgid = toString (serverConfig.pgid or 1000);
+      puid = toString (serverConfig.puid);
+      pgid = toString (serverConfig.pgid);
 
       volumeMountsStr = builtins.concatStringsSep "\n        " (
         [

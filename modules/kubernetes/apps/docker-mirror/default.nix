@@ -19,6 +19,7 @@
 # secrets/registry-htpasswd.age:
 #   Shared with the private docker-registry. Same users can log in to both.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -28,7 +29,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
 
   # The twuni chart always generates its own Secret named
   # "<release>-<chart>-secret" (here: docker-mirror-docker-registry-secret)

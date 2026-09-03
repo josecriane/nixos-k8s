@@ -6,15 +6,16 @@
 }:
 
 let
+
   isBootstrap = nodeConfig.bootstrap or false;
 
   k8sCfg = serverConfig.kubernetes or { };
-  engine = k8sCfg.engine or "k3s";
-  cni = k8sCfg.cni or "flannel";
+  engine = k8sCfg.engine;
+  cni = k8sCfg.cni;
 
-  certProvider = serverConfig.certificates.provider or "acme";
+  certProvider = serverConfig.certificates.provider;
 
-  longhornEnabled = serverConfig.storage.longhorn.enable or false;
+  longhornEnabled = serverConfig.storage.longhorn.enable;
 in
 {
   imports = [
@@ -56,7 +57,7 @@ in
   ++ lib.optionals longhornEnabled [
     ./longhorn
   ]
-  ++ lib.optionals (isBootstrap && (serverConfig.gc.enable or false)) [
+  ++ lib.optionals (isBootstrap && (serverConfig.gc.enable)) [
     ./gc.nix
   ];
 }

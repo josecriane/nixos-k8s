@@ -14,7 +14,7 @@ let
   isAgent = nodeConfig.role == "agent";
   isBootstrap = nodeConfig.bootstrap or false;
   isHA = builtins.length (builtins.filter (n: n.role == "server") clusterNodes) > 1;
-  k8sCfg = serverConfig.kubernetes or { };
+  k8sCfg = config.cluster.kubernetes;
   cni = k8sCfg.cni or "flannel";
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";

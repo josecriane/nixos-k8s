@@ -1,4 +1,5 @@
 {
+  config,
   lib,
   pkgs,
   serverConfig,
@@ -9,7 +10,7 @@
 let
   isBootstrap = nodeConfig.bootstrap or false;
 
-  cfg = serverConfig.gc or { };
+  cfg = config.cluster.gc;
   enabled = cfg.enable or false;
   onCalendar = cfg.onCalendar or "*-*-* 05:00:00";
   replicaSetAgeHours = cfg.replicaSetAgeHours or 24;

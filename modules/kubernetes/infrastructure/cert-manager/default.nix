@@ -1,4 +1,5 @@
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -8,17 +9,15 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
 
   certBackupDir = "/var/lib/cert-backup";
-  nasBackupDir = "/mnt/nas1/backups";
+  nasBackupDir = "${k8s.primaryNasMountPoint}/backups";
   certName = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}";
   secretName = "${certName}-tls";
 
-  restoreFromBackup = serverConfig.certificates.restoreFromBackup or true;
+  restoreFromBackup = config.cluster.certificates.restoreFromBackup;
 
-  nasConfig = serverConfig.nas.nas1 or null;
-  nasEnabled = nasConfig != null && (nasConfig.enabled or false);
+  nasEnabled = k8s.primaryNas != null;
 
   # NAS backups are only filesystem operations (age decrypt/copy). Do this
   # before k3s/helm so it doesn't gate cluster progress, and so the local

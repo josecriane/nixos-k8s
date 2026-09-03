@@ -2,6 +2,7 @@
 # Always imported - generates cleanup commands only for disabled services
 # PVCs are preserved to protect user data
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -10,8 +11,7 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
-  svc = serverConfig.services or { };
+  svc = config.cluster.services;
   enabled = name: svc.${name} or false;
 
   cfg = config.k8s.cleanup;

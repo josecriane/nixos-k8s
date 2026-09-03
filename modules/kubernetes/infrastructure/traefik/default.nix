@@ -1,4 +1,6 @@
 {
+  k8s,
+  config,
   lib,
   pkgs,
   serverConfig,
@@ -6,8 +8,7 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
-  isAcme = (serverConfig.certificates.provider or "manual") == "acme";
+  isAcme = config.cluster.certificates.provider == "acme";
 
   additionalArgs = [
     "--providers.kubernetescrd.allowCrossNamespace=true"

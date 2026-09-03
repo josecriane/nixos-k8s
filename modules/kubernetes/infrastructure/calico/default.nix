@@ -1,6 +1,8 @@
 # Calico CNI via Tigera operator
 # Only installed on bootstrap server (operator manages DaemonSets on all nodes)
 {
+  k8s,
+  config,
   lib,
   pkgs,
   serverConfig,
@@ -8,8 +10,7 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
-  podCidr = (serverConfig.kubernetes or { }).podCidr or "10.42.0.0/16";
+  podCidr = config.cluster.kubernetes.podCidr;
 
   # Migration: the previous module was named "calico", this one is
   # "tigera-operator". Remove the stale marker so the service lifecycle

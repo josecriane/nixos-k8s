@@ -22,6 +22,7 @@
 #   docker login registry.<subdomain>.<domain>
 #   docker push registry.<subdomain>.<domain>/myimage:latest
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -31,7 +32,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
 
   # htpasswd secret for Traefik BasicAuth (key must be 'users').
   # Must exist before manifests.yaml applies the Middleware that references it,

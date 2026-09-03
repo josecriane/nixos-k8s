@@ -8,6 +8,7 @@
 
 {
   imports = [
+    ../options.nix
     ./nix.nix
     ./users.nix
     ./ssh.nix
@@ -49,7 +50,7 @@
   services.xserver.enable = false;
 
   # Swap - disabled when using kubeadm (kubelet doesn't support swap by default)
-  swapDevices = lib.mkIf ((serverConfig.kubernetes.engine or "k3s") != "kubeadm") [
+  swapDevices = lib.mkIf (config.cluster.kubernetes.engine != "kubeadm") [
     {
       device = "/swapfile";
       size = 16384;

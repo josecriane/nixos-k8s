@@ -4,6 +4,7 @@
 # (which already relabel to the hostname) and with any downstream-registered
 # exporters for hosts outside the cluster.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -12,7 +13,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ns = "monitoring";
 
   patch = pkgs.writeText "node-exporter-relabel-patch.yaml" ''

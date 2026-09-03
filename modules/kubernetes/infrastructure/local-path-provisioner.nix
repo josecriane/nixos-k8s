@@ -2,6 +2,7 @@
 # K3s bundles this, kubeadm does not.
 # Provides a default StorageClass using hostPath volumes.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -10,7 +11,6 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/local-path-provisioner-setup-done";
 
   # Pinned version + SHA256 verified at build time by Nix

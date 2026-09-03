@@ -1,12 +1,10 @@
 {
   config,
   lib,
-  pkgs,
   serverConfig,
   nodeConfig,
   clusterNodes,
   secretsPath,
-  inputs,
   ...
 }:
 
@@ -53,7 +51,7 @@
     };
 
     # WiFi or Ethernet depending on configuration
-    wireless = lib.mkIf (serverConfig.useWifi or false) {
+    wireless = lib.mkIf (config.cluster.useWifi) {
       enable = true;
       networks."${serverConfig.wifiSSID}" = {
         pskRaw = "ext:wifi_psk";
@@ -66,7 +64,7 @@
     enable = true;
     wait-online.enable = false;
     networks."10-lan" =
-      if (serverConfig.useWifi or false) then
+      if (config.cluster.useWifi) then
         {
           matchConfig.Name = "wlan0";
           address = [ "${nodeConfig.ip}/24" ];
@@ -89,7 +87,7 @@
   };
 
   # Secret for WiFi password (if using WiFi)
-  age.secrets.wifi-password = lib.mkIf (serverConfig.useWifi or false) {
+  age.secrets.wifi-password = lib.mkIf (config.cluster.useWifi) {
     file = "${secretsPath}/wifi-password.age";
     path = "/run/secrets/wifi_psk";
   };

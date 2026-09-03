@@ -1,4 +1,5 @@
 {
+  k8s,
   lib,
   pkgs,
   serverConfig,
@@ -7,7 +8,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   bootstrapNode =
     let
       b = lib.findFirst (n: n.bootstrap or false) null clusterNodes;

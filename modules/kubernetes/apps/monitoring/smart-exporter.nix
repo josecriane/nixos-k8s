@@ -3,6 +3,7 @@
 # Downstream layers can register additional scrape targets (e.g. NAS hosts
 # outside the cluster) with a separate Service/Endpoints/ServiceMonitor.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -12,7 +13,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ns = "monitoring";
   port = 9633;
 

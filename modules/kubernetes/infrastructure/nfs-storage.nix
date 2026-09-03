@@ -1,6 +1,7 @@
 # NFS Storage PV/PVC creation - imported only on bootstrap server
 # Creates K8s PersistentVolumes and PersistentVolumeClaims
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -10,15 +11,14 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
   cfg = config.k8s.storage.nfs;
   ns = cfg.namespace;
   pvcName = cfg.pvcName;
   markerFile = "/var/lib/nfs-storage-setup-done";
 
-  useNFS = serverConfig.storage.useNFS or false;
+  useNFS = config.cluster.storage.useNFS;
 
-  enabledNas = lib.filterAttrs (name: nasCfg: nasCfg.enabled or false) (serverConfig.nas or { });
+  enabledNas = lib.filterAttrs (name: nasCfg: nasCfg.enabled or false) config.cluster.nas;
   primaryNas = lib.findFirst (
     nasCfg: (nasCfg.role or "all") == "media" || (nasCfg.role or "all") == "all"
   ) null (lib.attrValues enabledNas);
@@ -27,7 +27,8 @@ let
   nfsExports = if primaryNas != null then (primaryNas.nfsExports or { }) else { };
   nfsPath = nfsExports.nfsPath or "/";
 
-  nasMountPoint = "/mnt/nas1";
+  nasMountPoint = k8s.primaryNasMountPoint;
+  nasMountUnit = "${lib.replaceStrings [ "/" ] [ "-" ] (lib.removePrefix "/" nasMountPoint)}.mount";
   hostDataPath = if useNFS then nasMountPoint else cfg.localDataPath;
 
   pvName = "${pvcName}-pv";
@@ -76,9 +77,9 @@ in
     after = [
       "k3s-infrastructure.target"
     ]
-    ++ lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ cfg.extraMountUnits);
+    ++ lib.optionals useNFS ([ nasMountUnit ] ++ cfg.extraMountUnits);
     requires = [ "k3s-infrastructure.target" ];
-    wants = lib.optionals useNFS ([ "mnt-nas1.mount" ] ++ cfg.extraMountUnits);
+    wants = lib.optionals useNFS ([ nasMountUnit ] ++ cfg.extraMountUnits);
     # TIER 2: Storage
     wantedBy = [ "k3s-storage.target" ];
     before = [ "k3s-storage.target" ];

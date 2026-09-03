@@ -3,6 +3,7 @@
 # DaemonSet; this module adds NAS hosts (which live outside the cluster).
 # No-op if no entry in serverConfig.nas has enabled=true.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -11,7 +12,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ns = "monitoring";
   port = 9100;
 

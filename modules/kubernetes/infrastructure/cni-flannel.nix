@@ -1,6 +1,7 @@
 # Flannel CNI for kubeadm engine
 # K3s bundles Flannel so this is only needed with kubeadm
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -9,9 +10,8 @@
 }:
 
 let
-  k8s = import ../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/flannel-setup-done";
-  podCidr = (serverConfig.kubernetes or { }).podCidr or "10.42.0.0/16";
+  podCidr = config.cluster.kubernetes.podCidr;
 
   # Pinned version + SHA256 verified at build time by Nix
   flannelVersion = "v0.28.4";

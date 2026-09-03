@@ -2,6 +2,7 @@
 # Requires tls-cert.age and tls-key.age in secrets/.
 # Only active when certificates.provider = "manual".
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -11,30 +12,33 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/tls-secret-setup-done";
   certSecret = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}-tls";
-  isManual = (serverConfig.certificates.provider or "manual") == "manual";
+  isManual = config.cluster.certificates.provider == "manual";
+
+  certFile = "${secretsPath}/tls-cert.age";
+  keyFile = "${secretsPath}/tls-key.age";
+
+  certsPresent = builtins.pathExists certFile && builtins.pathExists keyFile;
 
   # Hash of the encrypted cert+key. When agenix re-encrypts (cert rotation,
   # re-keying), the ciphertext changes so the hash changes and the service
   # re-runs. This propagates cert updates without a manual `make reinstall`.
   # .age files are binary so we use hashFile (which doesn't read content as string).
   certContentHash =
-    if isManual then
+    if isManual && certsPresent then
       builtins.hashString "sha256" (
-        (builtins.hashFile "sha256" "${secretsPath}/tls-cert.age")
-        + (builtins.hashFile "sha256" "${secretsPath}/tls-key.age")
+        (builtins.hashFile "sha256" certFile) + (builtins.hashFile "sha256" keyFile)
       )
     else
       "";
 in
 lib.mkIf isManual {
   age.secrets.tls-cert = {
-    file = "${secretsPath}/tls-cert.age";
+    file = certFile;
   };
   age.secrets.tls-key = {
-    file = "${secretsPath}/tls-key.age";
+    file = keyFile;
   };
 
   systemd.services.tls-secret-setup = {

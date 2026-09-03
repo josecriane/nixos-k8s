@@ -7,6 +7,7 @@
 # repos can add their own dashboards with a different source label so each
 # layer only prunes what it owns.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -15,7 +16,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ns = "monitoring";
 
   nasEnabled = lib.any (cfg: cfg.enabled or false) (lib.attrValues (serverConfig.nas or { }));

@@ -2,6 +2,7 @@
 # Opt-in via serverConfig.traefik.dashboard.enable.
 # Middlewares are applied in declaration order; typical use is HSTS + forward-auth.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -10,11 +11,10 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   markerFile = "/var/lib/traefik-dashboard-setup-done";
 
-  dashCfg = serverConfig.traefik.dashboard or { };
-  dashEnable = serverConfig.services.traefikDashboard or false;
+  dashCfg = config.cluster.traefik.dashboard;
+  dashEnable = config.cluster.services.traefikDashboard;
   host = dashCfg.host or (k8s.hostname "traefik");
   middlewares = dashCfg.middlewares or [ ];
   extraAfter = dashCfg.extraAfter or [ ];

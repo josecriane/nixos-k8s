@@ -1,6 +1,7 @@
 # NFS mount declarations - imported on ALL nodes
 # Ensures every node can access NAS storage for pods scheduled on it
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -9,9 +10,9 @@
 }:
 
 let
-  useNFS = serverConfig.storage.useNFS or false;
+  useNFS = config.cluster.storage.useNFS;
 
-  enabledNas = lib.filterAttrs (name: cfg: cfg.enabled or false) (serverConfig.nas or { });
+  enabledNas = lib.filterAttrs (name: cfg: cfg.enabled or false) config.cluster.nas;
   primaryNas = lib.findFirst (
     cfg: (cfg.role or "all") == "media" || (cfg.role or "all") == "all"
   ) null (lib.attrValues enabledNas);
@@ -22,9 +23,9 @@ let
 
   secondaryNasList = lib.filter (
     cfg: (cfg.enabled or false) && (cfg.mediaPaths or [ ]) != [ ] && cfg != primaryNas
-  ) (lib.attrValues (serverConfig.nas or { }));
+  ) (lib.attrValues config.cluster.nas);
 
-  nasMountPoint = "/mnt/nas1";
+  nasMountPoint = k8s.primaryNasMountPoint;
 in
 {
   # Enable NFS client support
@@ -58,7 +59,7 @@ in
     // lib.foldl' (
       acc: nasCfg:
       let
-        nasMount = "/mnt/${nasCfg.hostname}";
+        nasMount = k8s.nasMountPointOf nasCfg;
         nasNfsPath = (nasCfg.nfsExports or { }).nfsPath or "/";
       in
       acc

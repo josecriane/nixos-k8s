@@ -12,7 +12,7 @@
 }:
 
 let
-  k8sCfg = serverConfig.kubernetes or { };
+  k8sCfg = config.cluster.kubernetes;
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
   cni = k8sCfg.cni or "flannel";

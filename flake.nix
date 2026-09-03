@@ -37,7 +37,9 @@
           extraSpecialArgs ? { },
         }:
         let
-          nodes = clusterConfig.nodes;
+          cfg = nixpkgs.lib.recursiveUpdate (import ./modules/cluster-defaults.nix) clusterConfig;
+
+          nodes = cfg.nodes;
           bootstrapName = builtins.head (
             builtins.attrNames (nixpkgs.lib.filterAttrs (_: n: n.bootstrap or false) nodes)
           );
@@ -62,7 +64,11 @@
                   nodeConfig
                   clusterNodes
                   ;
-                serverConfig = clusterConfig;
+                serverConfig = cfg;
+                k8s = import ./modules/kubernetes/lib.nix {
+                  inherit pkgs;
+                  serverConfig = cfg;
+                };
               }
               // extraSpecialArgs;
               modules = [
@@ -113,6 +119,42 @@
           setup = mkScriptApp "setup" "${self}/scripts/setup.sh";
           add-node = mkScriptApp "add-node" "${self}/scripts/add-node.sh";
           sync-bootstrap-secrets = mkScriptApp "sync-bootstrap-secrets" "${self}/scripts/sync-bootstrap-secrets.sh";
+        };
+
+      checks.${system} =
+        let
+          base = import "${self}/config.example.nix";
+          mkVariant =
+            suffix: overrides:
+            nixpkgs.lib.mapAttrs'
+              (name: node: nixpkgs.lib.nameValuePair "${name}${suffix}" node.config.system.build.toplevel)
+              (mkCluster {
+                clusterConfig = base // overrides;
+                hostsPath = "${self}/hosts";
+                secretsPath = "${self}/secrets";
+              });
+        in
+        mkVariant "" { }
+        // mkVariant "-kubeadm-calico" {
+          kubernetes = base.kubernetes // {
+            engine = "kubeadm";
+            cni = "calico";
+          };
+        }
+        // mkVariant "-services" {
+          services = base.services // {
+            monitoring = true;
+            traefikDashboard = true;
+            docker-registry = true;
+            docker-mirror = true;
+          };
+          storage = base.storage // {
+            useNFS = true;
+          };
+          nas.nas1 = {
+            enabled = true;
+            ip = "192.168.1.50";
+          };
         };
 
       formatter.${system} = pkgs.nixfmt-tree;

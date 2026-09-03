@@ -37,6 +37,7 @@
 # The K8s Secret named in `existingSecret` must be created out-of-band (e.g.
 # downstream, from agenix). Helm/Prometheus only reference it.
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -45,7 +46,6 @@
 }@args:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ns = "monitoring";
 
   dashboardsModule = import ./dashboards.nix args;
@@ -270,7 +270,7 @@ let
       script = pkgs.writeShellScript "${name}-uninstall" ''
         set -e
         export KUBECONFIG=${
-          if (serverConfig.kubernetes.engine or "k3s") == "k3s" then
+          if config.cluster.kubernetes.engine == "k3s" then
             "/etc/rancher/k3s/k3s.yaml"
           else
             "/etc/kubernetes/cluster-admin.kubeconfig"

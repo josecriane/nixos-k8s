@@ -37,6 +37,7 @@
 #   - With githubApp block: needs secrets/github-app-key.age (private key .pem)
 #   - Without githubApp block: falls back to PAT via secrets/github-pat.age
 {
+  k8s,
   config,
   lib,
   pkgs,
@@ -46,7 +47,6 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   ghConfig = serverConfig.github-runners or { };
   githubConfigUrl = ghConfig.configUrl or "";
   maxRunners = ghConfig.maxRunners or 5;
@@ -114,7 +114,7 @@ let
     )
   );
 
-  mirrorEnabled = (serverConfig.services or { }).docker-mirror or false;
+  mirrorEnabled = config.cluster.services.docker-mirror or false;
   # Internal cluster DNS for the mirror (no external ingress)
   mirrorInternalHost = "docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000";
   registryHost = "registry.${serverConfig.subdomain}.${serverConfig.domain}";

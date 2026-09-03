@@ -1,4 +1,6 @@
 {
+  k8s,
+  config,
   lib,
   pkgs,
   serverConfig,
@@ -7,10 +9,9 @@
 }:
 
 let
-  k8s = import ../../lib.nix { inherit pkgs serverConfig; };
   isBootstrap = nodeConfig.bootstrap or false;
 
-  longhornCfg = serverConfig.storage.longhorn or { };
+  longhornCfg = config.cluster.storage.longhorn;
   replicaCount = longhornCfg.replicaCount or 2;
   defaultClass = longhornCfg.defaultStorageClass or false;
   ingressCfg = longhornCfg.ingress or null;

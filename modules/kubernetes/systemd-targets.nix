@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  pkgs,
   nodeConfig,
   serverConfig,
   ...
@@ -9,7 +8,7 @@
 
 let
   isBootstrap = nodeConfig.bootstrap or false;
-  engine = (serverConfig.kubernetes or { }).engine or "k3s";
+  engine = config.cluster.kubernetes.engine;
   engineService = if engine == "k3s" then "k3s.service" else "kube-apiserver.service";
 in
 {
