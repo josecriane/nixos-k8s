@@ -195,9 +195,17 @@ in
         exit_code=0
 
         for dev in $(lsblk -dno NAME,TYPE,TRAN | awk '$2=="disk" && $3!="iscsi" {print "/dev/"$1}'); do
-          temp=$(smartctl -A "$dev" 2>/dev/null | \
-            awk '/Temperature_Celsius|Current Drive Temperature|Temperature:/ { for (i=1;i<=NF;i++) if ($i+0>0 && $i+0<150) { print $i+0; exit } }')
-          [ -z "$temp" ] && continue
+          temp=$(smartctl -A "$dev" 2>/dev/null | awk '
+            $1 == "Temperature:" { print $2; found = 1; exit }
+            /^Current Drive Temperature:/ { print $4; found = 1; exit }
+            $1 == "194" { print $10; found = 1; exit }
+            $1 == "190" { airflow = $10 }
+            END { if (!found && airflow != "") print airflow }
+          ')
+          case "$temp" in
+            "" | *[!0-9]*) continue ;;
+          esac
+          [ "$temp" -gt 150 ] && continue
           if [ "$temp" -ge "$threshold" ]; then
             echo "WARNING: $dev temperature is $temp C (threshold: $threshold C)"
             exit_code=1
