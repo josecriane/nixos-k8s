@@ -12,6 +12,7 @@ let
   k8sCfg = serverConfig.kubernetes or { };
   engine = k8sCfg.engine;
   cni = k8sCfg.cni;
+  loadBalancer = k8sCfg.loadBalancer;
 
   certProvider = serverConfig.certificates.provider;
 
@@ -40,8 +41,10 @@ in
     ./local-path-provisioner.nix
   ]
   # Core infrastructure (bootstrap only)
-  ++ lib.optionals isBootstrap [
+  ++ lib.optionals (isBootstrap && loadBalancer == "metallb") [
     ./metallb
+  ]
+  ++ lib.optionals isBootstrap [
     ./traefik
     ./traefik-dashboard
     ./tls-secret

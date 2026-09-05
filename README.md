@@ -7,7 +7,7 @@ Declarative multi-node Kubernetes cluster on NixOS. Everything defined in Nix, d
 - **Two Kubernetes engines**: K3s (lightweight) or kubeadm (standard, NixOS native)
 - **Two CNI options**: Flannel (simple) or Calico (network policies, BGP)
 - **Multi-node** with server/agent roles and optional HA
-- **MetalLB** for L2 LoadBalancer IPs on your LAN
+- **Two load balancer modes**: MetalLB (L2 IP pool on your LAN) or K3s servicelb (node IP, for single public-IP hosts)
 - **Traefik** as ingress controller with HTTPS
 - **TLS certificates**: manual (via agenix) or automatic (cert-manager + Cloudflare)
 - **Storage options**: NFS, local hostPath, or Longhorn (replicated block storage)
@@ -170,7 +170,7 @@ Define your cluster nodes in the `nodes` attrset. Each key maps to a `hosts/<key
 
 | Role | What it does |
 |------|-------------|
-| **server** (bootstrap=true) | First server. Initializes cluster, runs MetalLB/Traefik/cert-manager setup |
+| **server** (bootstrap=true) | First server. Initializes cluster, runs the load balancer (MetalLB, unless `loadBalancer = "servicelb"`), Traefik and cert-manager setup |
 | **server** (bootstrap=false) | Additional server. Joins cluster, provides HA |
 | **agent** | Worker node. Runs workloads only, no control plane |
 
@@ -193,7 +193,7 @@ kubernetes = {
 | **flannel** | Simple VXLAN overlay. Bundled with K3s, installed separately with kubeadm. |
 | **calico** | Network policies, BGP support. Deployed via Tigera operator. Works with both engines. |
 
-Both engines use the same infrastructure on top (MetalLB, Traefik, cert-manager, storage) and the same helpers (`lib.sh`, `lib.nix`). Switching engine only changes how the cluster is bootstrapped.
+Both engines use the same infrastructure on top (load balancer, Traefik, cert-manager, storage) and the same helpers (`lib.sh`, `lib.nix`). Switching engine only changes how the cluster is bootstrapped. Note that `loadBalancer = "servicelb"` is k3s-only; kubeadm always uses MetalLB.
 
 ### TLS certificates
 
@@ -376,7 +376,7 @@ nixos-k8s/
         kubeadm.nix                  kubeadm engine (NixOS services.kubernetes)
         cni-flannel.nix              Flannel CNI (for kubeadm)
         calico/                      Calico CNI via Tigera (both engines)
-        metallb/                     L2 load balancer (bootstrap)
+        metallb/                     L2 load balancer (bootstrap, metallb mode only)
         traefik/                     Ingress controller (bootstrap)
         tls-secret/                  TLS cert upload (manual provider)
         cert-manager/                Wildcard certs (bootstrap, acme only)
@@ -469,6 +469,24 @@ make sync-bootstrap-secrets NODE=<bootstrap>
 | 10250 | kubelet |
 | 9100 | node-exporter (hostNetwork, scraped cross-node) |
 | 8472/UDP | VXLAN overlay (Flannel) |
+
+### Load balancer mode
+
+`kubernetes.loadBalancer` selects how `LoadBalancer` Services get an address:
+
+| Mode | Behaviour | When |
+|------|-----------|------|
+| `metallb` (default) | MetalLB in L2 mode hands out IPs from `metallbPoolStart`-`metallbPoolEnd`. Traefik is pinned to `traefikIP`. | LAN clusters with a spare IP range |
+| `servicelb` | K3s klipper-lb is left enabled and publishes Services on the node IPs via hostPort. MetalLB is not deployed and `traefikIP` is unused. | A single host with one public IP (VPS), where an L2 pool makes no sense |
+
+`servicelb` requires `engine = "k3s"`; an assertion enforces it.
+
+Traefik is published with `externalTrafficPolicy: Local` in this mode. Klipper
+otherwise SNATs, which would make every request look like it came from a pod IP
+and render access logs and IP-based blocking useless. The trade-off is that only
+nodes running a Traefik pod answer on 80/443, which is the intended shape for a
+single-host deployment. On a multi-node `servicelb` cluster, point DNS at the node
+that runs Traefik or override the policy in your own values.
 
 ### MetalLB L2 election
 
@@ -740,7 +758,7 @@ Where `./modules/my-services.nix` is a regular NixOS module that can read `serve
 1. Network up, static IP, dnsmasq starts
 2. `k3s-network-check` verifies connectivity
 3. K3s starts with `--cluster-init` (HA) or as single server
-4. **Tier 1**: CNI, MetalLB, Traefik, TLS secret, local-path-provisioner (parallel)
+4. **Tier 1**: CNI, MetalLB (metallb mode only), Traefik, TLS secret, local-path-provisioner (parallel)
 5. **Tier 2**: NFS mounts, PV/PVC creation
 6. **Tier 3-5**: Your services
 

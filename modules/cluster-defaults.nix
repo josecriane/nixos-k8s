@@ -7,6 +7,7 @@
   kubernetes = {
     engine = "k3s";
     cni = "flannel";
+    loadBalancer = "metallb";
     podCidr = "10.42.0.0/16";
     serviceCidr = "10.43.0.0/16";
   };

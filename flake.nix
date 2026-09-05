@@ -141,6 +141,11 @@
             cni = "calico";
           };
         }
+        // mkVariant "-servicelb" {
+          kubernetes = base.kubernetes // {
+            loadBalancer = "servicelb";
+          };
+        }
         // mkVariant "-services" {
           services = base.services // {
             monitoring = true;

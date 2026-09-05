@@ -25,6 +25,7 @@
   kubernetes = {
     engine = "k3s"; # "k3s" (lightweight, batteries included) or "kubeadm" (standard, NixOS native)
     cni = "flannel"; # "flannel" (simple overlay) or "calico" (network policies, BGP capable)
+    loadBalancer = "metallb"; # "metallb" (L2 pool on your LAN) or "servicelb" (k3s klipper on the node IP)
     podCidr = "10.42.0.0/16"; # internal pod network
     serviceCidr = "10.43.0.0/16"; # internal service network
   };

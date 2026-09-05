@@ -17,8 +17,6 @@ template:
         env:
           - name: DOCKER_HOST
             value: unix:///var/run/docker.sock
-          - name: DOCKER_API_VERSION
-            value: "1.43"
           - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
             value: "120"
         resources: __RUNNER_RESOURCES__
@@ -29,31 +27,15 @@ template:
             mountPath: /var/run
           - name: docker-conf-rw
             mountPath: /home/runner/.docker
-      - name: dind
-        image: docker:24-dind
-        args:
-          - dockerd
-          - --host=unix:///var/run/docker.sock
-          - --group=$(DOCKER_GROUP_GID)
-        env:
-          - name: DOCKER_GROUP_GID
-            value: "123"
-        securityContext:
-          privileged: true
-        resources: __DIND_RESOURCES__
-        volumeMounts:
-          - name: work
-            mountPath: /home/runner/_work
-          - name: dind-sock
-            mountPath: /var/run
-          - name: dind-externals
-            mountPath: /home/runner/externals
-          - name: daemon-json
-            mountPath: /etc/docker/daemon.json
-            readOnly: true
-            subPath: daemon.json
-          - name: dind-docker-conf
-            mountPath: /root/.docker
+    # dind sits here and not under `containers` on purpose: an initContainer
+    # with restartPolicy Always is a native sidecar (k8s >= 1.29), so kubelet
+    # starts it before the runner and stops it after the job finishes. This is
+    # what the chart itself emits for containerMode dind; the whole spec is
+    # written out by hand only because containerMode offers no way to mount
+    # daemon.json into the dind container (chart values.yaml: "if any
+    # customization is required [...] containerMode should remain empty").
+    # Order matters: dind goes last because it mounts what the two init
+    # containers above populate.
     initContainers:
       - name: init-dind-externals
         image: ghcr.io/actions/actions-runner:latest
@@ -86,6 +68,46 @@ template:
           - name: mirror-registry
             mountPath: /docker-conf-ro/config.json
             subPath: .dockerconfigjson
+      - name: dind
+        image: docker:28-dind
+        restartPolicy: Always
+        args:
+          - dockerd
+          - --host=unix:///var/run/docker.sock
+          - --group=$(DOCKER_GROUP_GID)
+        env:
+          # GID of the `docker` group in the actions-runner image, so the
+          # non-root `runner` user can reach the socket shared over /var/run.
+          # Mirrors the chart's own value; re-check when bumping the chart.
+          - name: DOCKER_GROUP_GID
+            value: "123"
+        securityContext:
+          privileged: true
+        # Gates the runner on dockerd actually accepting connections, instead
+        # of relying only on the runner's own RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
+        # polling. 24 x 5s matches that 120s budget.
+        startupProbe:
+          exec:
+            command:
+              - docker
+              - info
+          initialDelaySeconds: 0
+          failureThreshold: 24
+          periodSeconds: 5
+        resources: __DIND_RESOURCES__
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+          - name: daemon-json
+            mountPath: /etc/docker/daemon.json
+            readOnly: true
+            subPath: daemon.json
+          - name: dind-docker-conf
+            mountPath: /root/.docker
     volumes:
       - name: work
         emptyDir: {}

@@ -89,6 +89,13 @@ in
             ];
             default = defaults.kubernetes.cni;
           };
+          loadBalancer = mkOption {
+            type = types.enum [
+              "metallb"
+              "servicelb"
+            ];
+            default = defaults.kubernetes.loadBalancer;
+          };
           podCidr = mkOption {
             type = types.str;
             default = defaults.kubernetes.podCidr;
@@ -196,6 +203,11 @@ in
       {
         assertion = builtins.deepSeq config.cluster true;
         message = "unreachable: cluster config failed to evaluate";
+      }
+      {
+        assertion =
+          config.cluster.kubernetes.loadBalancer != "servicelb" || config.cluster.kubernetes.engine == "k3s";
+        message = "kubernetes.loadBalancer = \"servicelb\" requires kubernetes.engine = \"k3s\"";
       }
     ];
   };

@@ -19,6 +19,7 @@ let
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
   useCalico = cni == "calico";
+  useServiceLB = k8sCfg.loadBalancer == "servicelb";
   kubeconfigPath = "/etc/rancher/k3s/k3s.yaml";
 in
 {
@@ -40,16 +41,20 @@ in
 
     extraFlags = toString (
       # Server-specific flags
-      lib.optionals isServer [
-        "--secrets-encryption"
-        "--disable=traefik"
-        "--disable=servicelb"
-        "--write-kubeconfig-mode=600"
-        "--cluster-cidr=${podCidr}"
-        "--service-cidr=${serviceCidr}"
-        "--node-ip=${nodeConfig.ip}"
-        "--advertise-address=${nodeConfig.ip}"
-      ]
+      lib.optionals isServer (
+        [
+          "--secrets-encryption"
+          "--disable=traefik"
+        ]
+        ++ lib.optional (!useServiceLB) "--disable=servicelb"
+        ++ [
+          "--write-kubeconfig-mode=600"
+          "--cluster-cidr=${podCidr}"
+          "--service-cidr=${serviceCidr}"
+          "--node-ip=${nodeConfig.ip}"
+          "--advertise-address=${nodeConfig.ip}"
+        ]
+      )
       # Disable built-in flannel when using calico
       ++ lib.optionals (isServer && useCalico) [
         "--flannel-backend=none"
@@ -91,9 +96,11 @@ in
   };
 
   # Firewall
-  # API server (6443), kubelet (10250), node-exporter (9100) and etcd
-  # (2379/2380) are NOT in allowedTCPPorts. They're restricted via
-  # extraCommands to cluster nodes + pod/service CIDRs only.
+  # API server (6443), kubelet (10250), node-exporter (9100), etcd
+  # (2379/2380) and the Flannel VXLAN port (8472/UDP) are NOT in the
+  # allowedTCPPorts/allowedUDPPorts lists. They are restricted via
+  # extraCommands to cluster nodes + pod/service CIDRs only, so they are never
+  # reachable from outside the cluster.
   networking.firewall.allowedTCPPorts = [ ];
 
   networking.firewall.extraCommands =
@@ -109,6 +116,9 @@ in
     ''
       # Kubelet + node-exporter (scraped by Prometheus from within the cluster)
       iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 10250,9100 -j nixos-fw-accept
+
+      # Flannel VXLAN
+      iptables -A nixos-fw -s ${sources} -p udp --dport 8472 -j nixos-fw-accept
     ''
     + lib.optionalString isServer ''
       # K3s API server
@@ -118,10 +128,6 @@ in
       # etcd peer + client (HA only)
       iptables -A nixos-fw -s ${sources} -p tcp -m multiport --dports 2379,2380 -j nixos-fw-accept
     '';
-
-  networking.firewall.allowedUDPPorts = [
-    8472 # Flannel VXLAN
-  ];
 
   # Allow traffic on CNI interfaces
   networking.firewall.trustedInterfaces = [
