@@ -124,7 +124,7 @@ in
         }
 
         # Ensure the target namespace exists (PVC will fail to apply otherwise).
-        $KUBECTL get namespace ${ns} &>/dev/null || $KUBECTL create namespace ${ns}
+        ensure_namespace ${ns}
 
         # Create configured directory structure
         echo "Creating directory structure..."
