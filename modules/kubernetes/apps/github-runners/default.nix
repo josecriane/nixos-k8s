@@ -145,8 +145,11 @@ let
     tier = "apps";
     preScript = ''
       echo "Applying ARC CRDs..."
-      $HELM show crds oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
-        --version 0.14.2 | $KUBECTL apply --server-side --force-conflicts -f -
+      CRD_DIR=$(mktemp -d)
+      $HELM pull oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+        --version 0.14.2 --untar --untardir "$CRD_DIR"
+      $KUBECTL apply --server-side --force-conflicts -f "$CRD_DIR/gha-runner-scale-set-controller/crds/"
+      rm -rf "$CRD_DIR"
     '';
   };
 
