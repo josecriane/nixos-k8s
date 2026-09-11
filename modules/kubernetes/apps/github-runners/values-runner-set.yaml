@@ -13,8 +13,16 @@ template:
       - name: runner
         image: ghcr.io/actions/actions-runner:latest
         command:
-          - /home/runner/run.sh
+          - /bin/sh
+          - -c
+          - |
+            if [ -n "$APT_MIRROR" ]; then
+              sudo sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#${APT_MIRROR}/#g" /etc/apt/sources.list.d/ubuntu.sources
+            fi
+            exec /home/runner/run.sh
         env:
+          - name: APT_MIRROR
+            value: "__APT_MIRROR__"
           - name: DOCKER_HOST
             value: unix:///var/run/docker.sock
           - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS

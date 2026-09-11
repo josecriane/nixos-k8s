@@ -568,6 +568,8 @@ Use a fine-grained PAT scoped to `Self-hosted runners: Read and write` on the ta
 
 Runners include Docker-in-Docker support. When `docker-mirror` is enabled, DinD is configured to use the mirror automatically via cluster-internal DNS (no external exposure).
 
+Set `github-runners.aptMirror` (e.g. `"http://es.archive.ubuntu.com/ubuntu"`) to point `apt` inside runner jobs at a different Ubuntu mirror, for both the archive and security suites. The runner rewrites `/etc/apt/sources.list.d/ubuntu.sources` at startup, so steps running on the runner benefit; jobs using their own `container:` image keep that image's sources.
+
 ### Security considerations for runners
 
 DinD runs as a **privileged** container, which is equivalent to giving the workflow root on the host node. The module mitigates this by applying a `NetworkPolicy` that restricts egress from the runner namespace:

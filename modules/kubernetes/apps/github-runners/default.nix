@@ -52,6 +52,7 @@ let
   maxRunners = ghConfig.maxRunners or 5;
   runnerName = ghConfig.runnerName or "self-hosted-linux";
   nodeSlots = ghConfig.nodeSlots or { };
+  aptMirror = lib.removeSuffix "/" (ghConfig.aptMirror or "");
   slotsEnabled = nodeSlots != { };
   slotResource = "${serverConfig.domain}/runner-slot";
   slotResourcePointer = builtins.replaceStrings [ "~" "/" ] [ "~0" "~1" ] slotResource;
@@ -170,6 +171,7 @@ let
       HOST_ALIASES = hostAliasesJson;
       RUNNER_RESOURCES = builtins.toJSON runnerResourcesFinal;
       DIND_RESOURCES = builtins.toJSON dindResources;
+      APT_MIRROR = aptMirror;
     };
     extraScript = ''
       # Create GitHub auth secret (App or PAT)
