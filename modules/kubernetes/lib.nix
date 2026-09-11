@@ -167,6 +167,7 @@ rec {
       ingress ? null,
       middlewares ? [ ],
       waitFor ? null,
+      preScript ? "",
       extraScript ? "",
       # Pod Security Standard level applied to the namespace via labels.
       # Use "privileged" for workloads that need hostPath, capabilities, hostNetwork, etc.
@@ -195,20 +196,25 @@ rec {
         if valuesFile != null then renderValues name valuesFile substitutions else null;
 
       # Config hash: changes when chart, version, values, sets, or ingress change
-      configHashInput = builtins.toJSON {
-        inherit
-          chart
-          version
-          values
-          sets
-          substitutions
-          pssLevel
-          ;
-        valuesFile' = if valuesFile != null then builtins.readFile valuesFile else null;
-        manifests' = map (m: builtins.readFile m) manifests;
-        ingress' = if ingress != null then ingress else null;
-        extra = builtins.hashString "sha256" extraScript;
-      };
+      configHashInput = builtins.toJSON (
+        {
+          inherit
+            chart
+            version
+            values
+            sets
+            substitutions
+            pssLevel
+            ;
+          valuesFile' = if valuesFile != null then builtins.readFile valuesFile else null;
+          manifests' = map (m: builtins.readFile m) manifests;
+          ingress' = if ingress != null then ingress else null;
+          extra = builtins.hashString "sha256" extraScript;
+        }
+        // pkgs.lib.optionalAttrs (preScript != "") {
+          pre = builtins.hashString "sha256" preScript;
+        }
+      );
       configHash = builtins.hashString "sha256" configHashInput;
 
       versionFlag = if version != null then "--version ${version}" else "";
@@ -289,6 +295,8 @@ rec {
             ${repoScript}
 
             ${valuesFlag}
+
+            ${preScript}
 
             echo "Installing ${name} (${chart})..."
             $HELM upgrade --install "${name}" "${chart}" \

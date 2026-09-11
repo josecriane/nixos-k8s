@@ -69,7 +69,7 @@ template:
             mountPath: /docker-conf-ro/config.json
             subPath: .dockerconfigjson
       - name: dind
-        image: docker:28-dind
+        image: docker:29.8.0-dind
         restartPolicy: Always
         args:
           - dockerd

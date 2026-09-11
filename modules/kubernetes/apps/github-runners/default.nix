@@ -141,15 +141,20 @@ let
     name = "arc";
     namespace = "arc-systems";
     chart = "oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller";
-    version = "0.13.1";
+    version = "0.14.2";
     tier = "apps";
+    preScript = ''
+      echo "Applying ARC CRDs..."
+      $HELM show crds oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+        --version 0.14.2 | $KUBECTL apply --server-side --force-conflicts -f -
+    '';
   };
 
   runnerSet = k8s.createHelmRelease {
     name = "arc-runner-set";
     namespace = "arc-runners";
     chart = "oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set";
-    version = "0.13.1";
+    version = "0.14.2";
     tier = "extras";
     # Runners need privileged DinD (docker:24-dind sidecar).
     pssLevel = "privileged";
