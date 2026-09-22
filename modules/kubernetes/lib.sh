@@ -431,13 +431,13 @@ helm_install() {
     "${set_flags[@]}" \
     --wait \
     --timeout "$timeout" 2>&1; then
-    echo "Helm upgrade failed, retrying with --force..."
+    echo "Helm upgrade failed, retrying with --force-conflicts..."
     $HELM upgrade --install "$name" "$chart" \
       --namespace "$namespace" \
       --create-namespace \
       "${set_flags[@]}" \
       --wait \
-      --force \
+      --force-conflicts \
       --timeout "$timeout"
   fi
 }

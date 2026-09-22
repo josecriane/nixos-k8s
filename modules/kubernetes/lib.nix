@@ -307,7 +307,7 @@ rec {
               ${setsFlags} \
               --wait \
               --timeout ${timeout} || {
-                echo "Helm install failed, retrying with --force..."
+                echo "Helm install failed, retrying with --force-conflicts..."
                 $HELM upgrade --install "${name}" "${chart}" \
                   --namespace "${namespace}" \
                   --create-namespace \
@@ -315,7 +315,7 @@ rec {
                   ${valuesFlagArg} \
                   ${setsFlags} \
                   --wait \
-                  --force \
+                  --force-conflicts \
                   --timeout ${timeout}
               }
 
