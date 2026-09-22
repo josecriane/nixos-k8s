@@ -416,7 +416,13 @@ helm_install() {
   local chart="$2"
   local namespace="$3"
   local timeout="$4"
-  shift 4
+  local version="$5"
+  shift 5
+
+  local -a version_flag=()
+  if [ -n "$version" ]; then
+    version_flag=(--version "$version")
+  fi
 
   # Bash array preserves values with spaces (e.g. CIDR lists, comma-separated
   # config). A plain string would word-split during command expansion.
@@ -428,6 +434,7 @@ helm_install() {
   if ! $HELM upgrade --install "$name" "$chart" \
     --namespace "$namespace" \
     --create-namespace \
+    "${version_flag[@]}" \
     "${set_flags[@]}" \
     --wait \
     --timeout "$timeout" 2>&1; then
@@ -435,6 +442,7 @@ helm_install() {
     $HELM upgrade --install "$name" "$chart" \
       --namespace "$namespace" \
       --create-namespace \
+      "${version_flag[@]}" \
       "${set_flags[@]}" \
       --wait \
       --server-side=true \
