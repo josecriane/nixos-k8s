@@ -62,7 +62,7 @@ let
       if [ "$DRY_RUN" = "true" ]; then
         echo "  would delete $kind $ns/$name"
       else
-        ${kubectl} delete "$kind" "$name" -n "$ns" --ignore-not-found >/dev/null 2>&1 \
+        ${kubectl} delete "$kind" "$name" -n "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 \
           && echo "  deleted $kind $ns/$name" \
           || echo "  FAILED to delete $kind $ns/$name"
       fi
