@@ -141,7 +141,6 @@ let
     done <<< "$(${kubectl} get jobs -A -o json | ${jq} -r '
       .items[]
       | select((.status.succeeded // 0) > 0 or (.status.failed // 0) > 0)
-      | select(.metadata.ownerReferences == null or ([.metadata.ownerReferences[].kind] | index("CronJob") | not))
       | "\(.metadata.namespace)|\(.metadata.name)|\(.metadata.creationTimestamp)"')"
 
     echo "  Jobs: $JOB_DELETED removed"
