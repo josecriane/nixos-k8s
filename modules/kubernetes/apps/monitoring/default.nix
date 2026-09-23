@@ -77,6 +77,52 @@ let
   gcPromAllowlist = gcPromCfg.metricsAllowlist or [ ];
   gcPromRetention = gcPromCfg.retention or null;
 
+  amWhCfg = (monCfg.alertmanager or { }).webhook or { };
+  amWhEnable = amWhCfg.enable or false;
+  amWhUrl = amWhCfg.url or "";
+  amWhSecret = amWhCfg.existingSecret or null;
+  amWhTokenKey = amWhCfg.tokenKey or "api_token";
+  amWhRepeat = amWhCfg.repeatInterval or "12h";
+  amWhGroupBy =
+    amWhCfg.groupBy or [
+      "namespace"
+      "alertname"
+    ];
+
+  amWhReceiver = {
+    name = "webhook";
+    webhook_configs = [
+      (
+        {
+          url = amWhUrl;
+          send_resolved = true;
+        }
+        // lib.optionalAttrs (amWhSecret != null) {
+          http_config.authorization.credentials_file = "/etc/alertmanager/secrets/${amWhSecret}/${amWhTokenKey}";
+        }
+      )
+    ];
+  };
+
+  kpsAlertValues = lib.optionalAttrs (amWhEnable && amWhUrl != "") {
+    alertmanager = {
+      config = {
+        route = {
+          receiver = "webhook";
+          group_by = amWhGroupBy;
+          repeat_interval = amWhRepeat;
+        };
+        receivers = [
+          { name = "null"; }
+          amWhReceiver
+        ];
+      };
+    }
+    // lib.optionalAttrs (amWhSecret != null) {
+      alertmanagerSpec.secrets = [ amWhSecret ];
+    };
+  };
+
   remoteWriteEntry = {
     url = gcPromUrl;
     basicAuth = {
@@ -196,7 +242,7 @@ let
     };
     chart = "prometheus-community/kube-prometheus-stack";
     valuesFile = ./values-kps.yaml;
-    values = kpsCloudValues;
+    values = lib.recursiveUpdate kpsCloudValues kpsAlertValues;
     sets = kpsStorageSets;
     # node-exporter DaemonSet uses hostPath/hostNetwork/hostPID.
     pssLevel = "privileged";
