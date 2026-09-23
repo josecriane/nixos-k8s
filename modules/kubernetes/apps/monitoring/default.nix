@@ -77,6 +77,25 @@ let
   gcPromAllowlist = gcPromCfg.metricsAllowlist or [ ];
   gcPromRetention = gcPromCfg.retention or null;
 
+  engine = (serverConfig.kubernetes or { }).engine or "k3s";
+
+  kpsK3sValues = lib.optionalAttrs (engine == "k3s") {
+    kubeControllerManager.enabled = false;
+    kubeScheduler.enabled = false;
+    kubeProxy.enabled = false;
+    defaultRules.rules = {
+      kubeControllerManager = false;
+      kubeSchedulerAlerting = false;
+      kubeProxy = false;
+    };
+  };
+
+  disabledRules = monCfg.disabledRules or [ ];
+
+  kpsDisabledValues = lib.optionalAttrs (disabledRules != [ ]) {
+    defaultRules.disabled = lib.genAttrs disabledRules (_: true);
+  };
+
   amWhCfg = (monCfg.alertmanager or { }).webhook or { };
   amWhEnable = amWhCfg.enable or false;
   amWhUrl = amWhCfg.url or "";
@@ -242,7 +261,12 @@ let
     };
     chart = "prometheus-community/kube-prometheus-stack";
     valuesFile = ./values-kps.yaml;
-    values = lib.recursiveUpdate kpsCloudValues kpsAlertValues;
+    values = lib.foldl' lib.recursiveUpdate { } [
+      kpsCloudValues
+      kpsAlertValues
+      kpsK3sValues
+      kpsDisabledValues
+    ];
     sets = kpsStorageSets;
     # node-exporter DaemonSet uses hostPath/hostNetwork/hostPID.
     pssLevel = "privileged";
