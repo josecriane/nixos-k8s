@@ -1,0 +1,68 @@
+logging {
+	level  = "warn"
+	format = "logfmt"
+}
+
+local.file_match "pods" {
+	path_targets = [{
+		__path__ = "/var/log/pods/*/*/*.log",
+	}]
+}
+
+discovery.relabel "pods" {
+	targets = local.file_match.pods.targets
+
+	rule {
+		source_labels = ["__path__"]
+		regex         = "/var/log/pods/([^_]+)_([^_]+)_[^/]+/([^/]+)/[^/]+\\.log"
+		target_label  = "namespace"
+		replacement   = "${1}"
+	}
+
+	rule {
+		source_labels = ["__path__"]
+		regex         = "/var/log/pods/([^_]+)_([^_]+)_[^/]+/([^/]+)/[^/]+\\.log"
+		target_label  = "pod"
+		replacement   = "${2}"
+	}
+
+	rule {
+		source_labels = ["__path__"]
+		regex         = "/var/log/pods/([^_]+)_([^_]+)_[^/]+/([^/]+)/[^/]+\\.log"
+		target_label  = "container"
+		replacement   = "${3}"
+	}
+
+	rule {
+		target_label = "node"
+		replacement  = sys.env("NODE_NAME")
+	}
+
+	rule {
+		target_label = "cluster"
+		replacement  = sys.env("CLUSTER_NAME")
+	}
+}
+
+loki.source.file "pods" {
+	targets    = discovery.relabel.pods.output
+	forward_to = [loki.process.pods.receiver]
+}
+
+loki.process "pods" {
+	forward_to = [loki.write.grafana_cloud.receiver]
+
+	stage.cri { }
+__DROP_STAGE__
+}
+
+loki.write "grafana_cloud" {
+	endpoint {
+		url = sys.env("LOKI_URL")
+
+		basic_auth {
+			username = sys.env("LOKI_USERNAME")
+			password = sys.env("LOKI_PASSWORD")
+		}
+	}
+}
