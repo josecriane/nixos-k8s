@@ -26,6 +26,7 @@ let
   cpuRequest = cfg.cpuRequest or "50m";
 
   configMapName = "alloy-logs-config";
+  storagePath = "/var/lib/alloy";
   uninstallService = import ./uninstall.nix { inherit config pkgs ns; };
 
   dropStage = lib.optionalString (dropRegex != "") ''
@@ -47,7 +48,19 @@ let
   '';
 
   values = {
-    controller.type = "daemonset";
+    controller = {
+      type = "daemonset";
+      podAnnotations = cfg.podAnnotations or { };
+      volumes.extra = [
+        {
+          name = "alloy-data";
+          hostPath = {
+            path = storagePath;
+            type = "DirectoryOrCreate";
+          };
+        }
+      ];
+    };
 
     alloy = {
       configMap = {
@@ -56,7 +69,17 @@ let
         key = "config.alloy";
       };
 
-      mounts.varlog = true;
+      inherit storagePath;
+
+      mounts = {
+        varlog = true;
+        extra = [
+          {
+            name = "alloy-data";
+            mountPath = storagePath;
+          }
+        ];
+      };
 
       securityContext.runAsUser = 0;
 

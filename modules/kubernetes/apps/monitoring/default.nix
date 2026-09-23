@@ -33,6 +33,7 @@
 #     existingSecret = "grafana-cloud-loki";   # LOKI_USERNAME + LOKI_PASSWORD
 #     clusterName    = "homelab";              # becomes the cluster label
 #     dropRegex      = "";                     # drop matching lines when set
+#     podAnnotations = { };                    # rolls the pods when a value changes
 #     chartVersion   = "1.12.1";
 #   };
 #
