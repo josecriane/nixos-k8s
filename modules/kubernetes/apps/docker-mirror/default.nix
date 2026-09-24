@@ -2,6 +2,8 @@
 #
 # config.nix:
 #   services.docker-mirror = true;
+#   dockerMirror.clusterIP   = "10.43.0.50";   # optional, pins the Service IP
+#   dockerMirror.storageSize = "20Gi";         # optional, defaults to the chart's 100Gi
 #
 # Exposed externally at mirror.<subdomain>.<domain> behind BasicAuth
 # (reusing the registry htpasswd in registry-htpasswd.age) so CI pipelines
@@ -14,7 +16,7 @@
 #   authenticate against Docker Hub (registry-1.docker.io) to avoid
 #   anonymous rate limits. Generate a token at
 #   https://hub.docker.com/settings/security and encrypt with:
-#     printf 'myuser\nmytoken\n' | agenix -e secrets/docker-mirror-proxy.age
+#     cd secrets && printf 'myuser\nmytoken\n' | agenix -e docker-mirror-proxy.age
 #
 # secrets/registry-htpasswd.age:
 #   Shared with the private docker-registry. Same users can log in to both.
@@ -29,6 +31,9 @@
 }:
 
 let
+  mirrorCfg = serverConfig.dockerMirror or { };
+  clusterIP = mirrorCfg.clusterIP or null;
+  storageSize = mirrorCfg.storageSize or null;
 
   # The twuni chart always generates its own Secret named
   # "<release>-<chart>-secret" (here: docker-mirror-docker-registry-secret)
@@ -103,6 +108,9 @@ let
     version = "2.2.3";
     tier = "core";
     valuesFile = ./values.yaml;
+    values =
+      lib.optionalAttrs (clusterIP != null) { service.clusterIP = clusterIP; }
+      // lib.optionalAttrs (storageSize != null) { persistence.size = storageSize; };
     ingress = {
       host = "mirror";
       service = "docker-mirror-docker-registry";
