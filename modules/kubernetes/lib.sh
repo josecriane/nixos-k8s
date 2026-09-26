@@ -411,45 +411,6 @@ helm_repo_add() {
   $HELM repo add "$name" "$url" --force-update || true
 }
 
-helm_install() {
-  local name="$1"
-  local chart="$2"
-  local namespace="$3"
-  local timeout="$4"
-  local version="$5"
-  shift 5
-
-  local -a version_flag=()
-  if [ -n "$version" ]; then
-    version_flag=(--version "$version")
-  fi
-
-  # Bash array preserves values with spaces (e.g. CIDR lists, comma-separated
-  # config). A plain string would word-split during command expansion.
-  local -a set_flags=()
-  for kv in "$@"; do
-    set_flags+=(--set "$kv")
-  done
-
-  if ! $HELM upgrade --install "$name" "$chart" \
-    --namespace "$namespace" \
-    --create-namespace \
-    "${version_flag[@]}" \
-    "${set_flags[@]}" \
-    --wait \
-    --timeout "$timeout" 2>&1; then
-    echo "Helm upgrade failed, retrying with server-side apply and --force-conflicts..."
-    $HELM upgrade --install "$name" "$chart" \
-      --namespace "$namespace" \
-      --create-namespace \
-      "${version_flag[@]}" \
-      "${set_flags[@]}" \
-      --wait \
-      --server-side=true \
-      --force-conflicts \
-      --timeout "$timeout"
-  fi
-}
 
 # ============================================
 # UTILITY FUNCTIONS

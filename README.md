@@ -457,6 +457,8 @@ make sync-bootstrap-secrets NODE=<bootstrap>
 
 `make sync-bootstrap-secrets` SSHes into the bootstrap, copies `ca.pem` and `apitoken.secret` into an agenix-encrypted pair (`kubernetes-ca.age`, `kubernetes-apitoken.age`) encrypted for every host key in `secrets/secrets.nix`. From then on every worker (`make install NODE=<worker>`) picks the decrypted files up on first activation and joins the cluster without manual scp.
 
+The `age.secrets` block for those two files is guarded by `builtins.pathExists`, so a repo that has never run `sync-bootstrap-secrets` (or a single-node setup with no workers) still evaluates. Once the pair exists, every worker decrypts them to `/var/lib/kubernetes/secrets/{ca.pem,apitoken.secret}` on activation.
+
 ### Firewall ports
 
 `kubeadm.nix` opens the ports that multi-node clusters need, restricted to cluster nodes and pod/service CIDRs:
@@ -587,6 +589,10 @@ Remaining risk: a workflow that manages to escape DinD still has root on the nod
 - **Limit who can trigger runs**: use branch protection rules, restrict `pull_request_target`, and avoid running untrusted PRs from external contributors.
 - **Prefer rootless builders for image builds**: replace `docker build` with kaniko or buildah in workflow steps where possible. DinD is only strictly needed when workflows use `docker run`.
 
+### Monitoring manifests
+
+The raw manifests (`smart-exporter`, `nas-smart-exporter`, `nas-node-exporter`) derive their `configHash` from `builtins.hashString "sha256" manifestText`, hashing the manifest string rather than the `pkgs.writeText` derivation that holds it. Hashing the built file would be import-from-derivation, which forces a build during evaluation and breaks the path-signing check `nixos-anywhere` performs while installing. Keep new manifests on the same pattern.
+
 ## Adding a service
 
 Use `createHelmRelease` to add a new Helm chart. One function call generates the complete systemd service with marker file, helm install, ingress, and TLS.
@@ -614,7 +620,10 @@ Use `createHelmRelease` to add a new Helm chart. One function call generates the
        port = 8080;
      };
      waitFor = "my-service";  # optional: wait for deployment to be ready
+     preScript = "";          # optional: extra bash before helm install
      extraScript = "";        # optional: extra bash after helm install
+     runtimeScript = "";      # optional: bash run first, to resolve deploy-time values
+     runtimeSets = [ ];       # optional: "key=$VAR" strings appended as --set
    }
    ```
 

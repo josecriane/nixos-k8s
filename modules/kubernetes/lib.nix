@@ -164,6 +164,12 @@ rec {
       # ingressScript/extraScript.
       manifests ? [ ],
       sets ? [ ],
+      # Values only knowable at deploy time, as shell-expandable "key=value" strings
+      # appended as --set. runtimeScript runs before the marker check, so it can define
+      # what they expand to and append conditional ones to EXTRA_SETS, and their expanded
+      # values join the marker hash.
+      runtimeSets ? [ ],
+      runtimeScript ? "",
       ingress ? null,
       middlewares ? [ ],
       waitFor ? null,
@@ -211,11 +217,35 @@ rec {
           ingress' = if ingress != null then ingress else null;
           extra = builtins.hashString "sha256" extraScript;
         }
+        // pkgs.lib.optionalAttrs (runtimeSets != [ ]) {
+          inherit runtimeSets;
+        }
+        // pkgs.lib.optionalAttrs (runtimeScript != "") {
+          runtime = builtins.hashString "sha256" runtimeScript;
+        }
         // pkgs.lib.optionalAttrs (preScript != "") {
           pre = builtins.hashString "sha256" preScript;
         }
       );
       configHash = builtins.hashString "sha256" configHashInput;
+
+      runtimeSetsScript =
+        if runtimeSets == [ ] && runtimeScript == "" then
+          ''
+            RUNTIME_SET_FLAGS=()
+            CONFIG_HASH="${configHash}"
+          ''
+        else
+          ''
+            RUNTIME_SETS=(${pkgs.lib.concatMapStringsSep " " (s: ''"${s}"'') runtimeSets})
+            RUNTIME_SETS+=("''${EXTRA_SETS[@]}")
+            RUNTIME_SET_FLAGS=()
+            for kv in "''${RUNTIME_SETS[@]}"; do
+              RUNTIME_SET_FLAGS+=(--set "$kv")
+            done
+            RUNTIME_DIGEST=$(printf '%s\0' "''${RUNTIME_SETS[@]}" | $OPENSSL dgst -sha256 -r | cut -d' ' -f1)
+            CONFIG_HASH=$(printf '%s%s' "${configHash}" "$RUNTIME_DIGEST" | $OPENSSL dgst -sha256 -r | cut -d' ' -f1)
+          '';
 
       versionFlag = if version != null then "--version ${version}" else "";
 
@@ -290,7 +320,13 @@ rec {
             # label set before helm --wait, or it will time out.
             ensure_namespace "${namespace}" "${pssLevel}"
 
-            setup_preamble_hash "${markerFile}" "${name}" "${configHash}"
+            EXTRA_SETS=()
+
+            ${runtimeScript}
+
+            ${runtimeSetsScript}
+
+            setup_preamble_hash "${markerFile}" "${name}" "$CONFIG_HASH"
 
             ${repoScript}
 
@@ -305,6 +341,7 @@ rec {
               ${versionFlag} \
               ${valuesFlagArg} \
               ${setsFlags} \
+              "''${RUNTIME_SET_FLAGS[@]}" \
               --wait \
               --timeout ${timeout} || {
                 echo "Helm install failed, retrying with server-side apply and --force-conflicts..."
@@ -314,6 +351,7 @@ rec {
                   ${versionFlag} \
                   ${valuesFlagArg} \
                   ${setsFlags} \
+                  "''${RUNTIME_SET_FLAGS[@]}" \
                   --wait \
                   --server-side=true \
                   --force-conflicts \
@@ -341,7 +379,7 @@ rec {
                   ""
               }
 
-            create_marker "${markerFile}" "${configHash}"
+            create_marker "${markerFile}" "$CONFIG_HASH"
           '';
         };
       };
