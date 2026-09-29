@@ -1,6 +1,8 @@
 proxy:
   enabled: true
   remoteurl: https://registry-1.docker.io
+updateStrategy:
+  type: Recreate
 persistence:
   enabled: true
   size: 100Gi
