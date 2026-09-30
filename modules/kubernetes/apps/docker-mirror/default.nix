@@ -69,6 +69,15 @@ let
       basicAuth:
         secret: registry-htpasswd
     MW
+
+    MIRROR_DEPLOY=docker-mirror-docker-registry
+    if $KUBECTL -n container-mirror get deploy $MIRROR_DEPLOY >/dev/null 2>&1 &&
+       [ "$($KUBECTL -n container-mirror get deploy $MIRROR_DEPLOY \
+            -o jsonpath='{.spec.strategy.type}')" != "Recreate" ]; then
+      echo "Switching the mirror to Recreate before helm runs..."
+      $KUBECTL -n container-mirror patch deploy $MIRROR_DEPLOY --type=merge \
+        -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+    fi
   '';
 
   injectProxyCreds = ''
