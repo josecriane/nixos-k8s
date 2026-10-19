@@ -16,9 +16,6 @@ let
   podCidr = k8sCfg.podCidr or "10.42.0.0/16";
   serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
   cni = k8sCfg.cni or "flannel";
-  # certmgr renewal check interval (Go duration string). See the comment
-  # next to services.certmgr below for why we override certmgr's 30m default.
-  certRenewInterval = k8sCfg.certRenewInterval or "24h";
 
   isServer = nodeConfig.role == "server";
   isAgent = nodeConfig.role == "agent";
@@ -180,15 +177,30 @@ in
   # Tracking: cloudflare/certmgr#125 (PR open since 2024, no merge),
   # NixOS/nixpkgs#434442 (issue open since 2025). Both unresolved; the
   # certmgr repo is on minimal maintenance.
-  #
-  # Mitigation: bump the renewal check interval. Default here is 24h (one
-  # cascade/day, low impact); override via
-  # serverConfig.kubernetes.certRenewInterval to trade safety margin for
-  # uptime (e.g. "2160h" for 4 cascades/year). Cert lifetimes are 365d, so
-  # even a 90-day interval still catches real expiry within validMin (72h
-  # default) margin before certs die.
-  services.certmgr = lib.mkIf isServer {
-    renewInterval = certRenewInterval;
+  services.certmgr = {
+    renewInterval = lib.mkIf (k8sCfg ? certRenewInterval) k8sCfg.certRenewInterval;
+    specs = lib.mkForce (
+      lib.mapAttrs (_: cert: {
+        inherit (cert) action;
+        authority = {
+          remote = "https://${config.services.kubernetes.masterAddress}:${toString config.services.cfssl.port}";
+          root_ca = cert.caCert;
+          profile = "default";
+          auth_key_file = "${config.services.kubernetes.secretsPath}/apitoken.secret";
+        };
+        certificate.path = cert.cert;
+        private_key = cert.privateKeyOptions;
+        request = {
+          hosts = [ (lib.replaceStrings [ ":" ] [ "-" ] cert.CN) ] ++ cert.hosts;
+          inherit (cert) CN;
+          key = {
+            algo = "rsa";
+            size = 2048;
+          };
+          names = [ cert.fields ];
+        };
+      }) config.services.kubernetes.pki.certs
+    );
   };
 
   # Container workloads spawned by containerd (DinD sidecars, databases in CI)
