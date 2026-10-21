@@ -72,11 +72,24 @@ wait_for_k3s() {
   local max_attempts=20
   local base_delay=3
   local max_delay=30
+  local stable=0
+  local stable_required=${K8S_API_STABLE_CHECKS:-3}
+  local stable_interval=5
 
   while [ $attempt -lt $max_attempts ]; do
-    if $KUBECTL get nodes &>/dev/null; then
-      echo "K3s is ready"
-      break
+    if $KUBECTL get --raw=/readyz &>/dev/null; then
+      stable=$((stable + 1))
+      if [ $stable -ge $stable_required ]; then
+        echo "K3s is ready"
+        break
+      fi
+      sleep $stable_interval
+      continue
+    fi
+
+    if [ $stable -gt 0 ]; then
+      echo "API went away after $stable successful check(s), starting over"
+      stable=0
     fi
 
     local delay=$((base_delay * (2 ** (attempt / 3))))
@@ -90,7 +103,7 @@ wait_for_k3s() {
     attempt=$((attempt + 1))
   done
 
-  if ! $KUBECTL get nodes &>/dev/null 2>&1; then
+  if [ $stable -lt $stable_required ]; then
     echo "ERROR: K3s not available after $max_attempts attempts"
     exit 1
   fi
@@ -104,10 +117,14 @@ wait_for_k3s() {
     echo "SKIP_NODE_READY=1 set, not waiting for node Ready"
   else
     echo "Waiting for node to become Ready..."
-    if ! $KUBECTL wait --for=condition=Ready node --all --timeout=300s; then
-      echo "ERROR: Node did not reach Ready state within 5 minutes"
-      exit 1
-    fi
+    local ready_deadline=$((SECONDS + 300))
+    until $KUBECTL wait --for=condition=Ready node --all --timeout=60s; do
+      if [ $SECONDS -ge $ready_deadline ]; then
+        echo "ERROR: Node did not reach Ready state within 5 minutes"
+        exit 1
+      fi
+      sleep 5
+    done
     echo "Node is Ready (CNI initialized)"
   fi
 
