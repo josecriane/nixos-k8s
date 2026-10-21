@@ -11,8 +11,10 @@
 }:
 
 let
+  engineService =
+    if config.cluster.kubernetes.engine == "k3s" then "k3s.service" else "kube-apiserver.service";
   targetName = "k3s-${tier}";
-  prevTarget =
+  prevTier =
     {
       infrastructure = null;
       storage = "infrastructure";
@@ -21,6 +23,7 @@ let
       extras = "apps";
     }
     .${tier} or null;
+  prevTarget = if prevTier != null then "k3s-${prevTier}.target" else null;
 
   script = pkgs.writeShellScript "${name}-uninstall" ''
     set -e
@@ -50,8 +53,9 @@ in
 {
   systemd.services."${name}-setup" = {
     description = "Reconcile ${name} (disabled in monitoring config)";
-    after = [ "k3s.service" ] ++ pkgs.lib.optional (prevTarget != null) "${prevTarget}.target";
-    requires = [ "k3s.service" ];
+    after = [ engineService ] ++ pkgs.lib.optional (prevTarget != null) prevTarget;
+    wants = [ engineService ];
+    requires = pkgs.lib.optional (prevTarget != null) prevTarget;
     wantedBy = [ "${targetName}.target" ];
     before = [ "${targetName}.target" ];
     serviceConfig = {
