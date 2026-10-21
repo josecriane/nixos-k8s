@@ -28,4 +28,6 @@
   };
 
   gc.enable = false;
+
+  firmwareUpdates.enable = true;
 }

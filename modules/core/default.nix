@@ -44,7 +44,7 @@
   ];
 
   # Firmware updates
-  services.fwupd.enable = true;
+  services.fwupd.enable = config.cluster.firmwareUpdates.enable;
 
   # Disable graphical interface
   services.xserver.enable = false;

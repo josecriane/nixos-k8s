@@ -167,6 +167,16 @@ in
         };
       };
 
+      firmwareUpdates = mkOption {
+        default = { };
+        type = freeform {
+          enable = mkOption {
+            type = types.bool;
+            default = defaults.firmwareUpdates.enable;
+          };
+        };
+      };
+
       traefik = mkOption {
         default = { };
         type = freeform {
