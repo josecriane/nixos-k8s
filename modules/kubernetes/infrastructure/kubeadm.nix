@@ -268,6 +268,11 @@ in
       # Calico VXLAN overlay between nodes. Without this, pod-to-pod traffic
       # across nodes is dropped.
       iptables -A nixos-fw -s ${sources} -p udp --dport 4789 -j nixos-fw-accept
+      # Calico Typha: calico-node subscribes here for the datastore snapshot.
+      # The operator schedules Typha on any node, so every node must accept
+      # it. No Typha -> Felix never programs NAT/routes and calico-node
+      # stays 0/1.
+      iptables -A nixos-fw -s ${sources} -p tcp --dport 5473 -j nixos-fw-accept
     ''
     + lib.optionalString isServer ''
       # API server, scheduler, controller-manager
@@ -277,10 +282,6 @@ in
       # times out and /var/lib/kubernetes/secrets/kubelet-client.pem is
       # never created, so kubelet fails to start.
       iptables -A nixos-fw -s ${sources} -p tcp --dport 8888 -j nixos-fw-accept
-      # Calico Typha: calico-node on worker nodes subscribes here for the
-      # datastore snapshot. No Typha -> Felix never programs NAT/routes,
-      # pods on workers lose cluster/internet egress (calico-node stays 0/1).
-      iptables -A nixos-fw -s ${sources} -p tcp --dport 5473 -j nixos-fw-accept
     ''
     + lib.optionalString (isServer && isHA) ''
       # etcd peer + client (HA only)
