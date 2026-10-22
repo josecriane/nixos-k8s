@@ -241,6 +241,18 @@ in
     pkgs.conntrack-tools
   ];
 
+  environment.etc."cni/net.d".source = lib.mkIf (cni == "calico") (lib.mkForce "/var/lib/cni/net.d");
+
+  system.activationScripts.calicoCniConfDir = lib.mkIf (cni == "calico") ''
+    mkdir -p /var/lib/cni/net.d
+    current=$(readlink -f /etc/cni/net.d 2>/dev/null || true)
+    if [ -n "$current" ] && [ "$current" != /var/lib/cni/net.d ] && [ -d "$current" ]; then
+      cp -a --update=none "$current"/. /var/lib/cni/net.d/
+    fi
+    chmod 0755 /var/lib/cni/net.d
+  '';
+  system.activationScripts.etc.deps = lib.mkIf (cni == "calico") [ "calicoCniConfDir" ];
+
   # Firewall
   # API server (6443), scheduler (10259), controller-manager (10257) and
   # kubelet (10250) are NOT in allowedTCPPorts to avoid exposing them globally.
