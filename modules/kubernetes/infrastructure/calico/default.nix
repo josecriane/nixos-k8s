@@ -11,6 +11,7 @@
 
 let
   podCidr = config.cluster.kubernetes.podCidr;
+  calicoVersion = "v3.33.0";
 
   # Migration: the previous module was named "calico", this one is
   # "tigera-operator". Remove the stale marker so the service lifecycle
@@ -31,12 +32,18 @@ let
       url = "https://docs.tigera.io/calico/charts";
     };
     chart = "projectcalico/tigera-operator";
+    version = calicoVersion;
     timeout = "10m";
     waitFor = "tigera-operator";
     manifests = [ ./installation.yaml ];
     substitutions = {
       POD_CIDR = podCidr;
     };
+    preScript = ''
+      echo "Applying Calico CRDs (${calicoVersion})..."
+      $HELM template calico-crds projectcalico/crd.projectcalico.org.v1 --version ${calicoVersion} \
+        | $KUBECTL apply --server-side --force-conflicts -f -
+    '';
     extraScript = ''
       # Calico needs privileged (hostNetwork, NET_ADMIN, hostPath).
       # tigera-operator ns was labeled via pssLevel; label the operator-managed ones too.
