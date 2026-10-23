@@ -8,7 +8,6 @@
   lib,
   pkgs,
   serverConfig,
-  clusterNodes,
   ...
 }:
 
@@ -16,76 +15,36 @@ let
   ns = "monitoring";
   port = 9633;
 
-  clusterAddresses = lib.concatMapStringsSep "\n" (n: ''
-    - ip: ${n.ip}
-      hostname: ${n.name}
-      targetRef:
-        kind: Node
-        name: ${n.name}'') clusterNodes;
-
   manifestText = ''
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: smartctl-exporter
-      namespace: ${ns}
-      labels:
-        app.kubernetes.io/name: smartctl-exporter
-    spec:
-      type: ClusterIP
-      clusterIP: None
-      ports:
-        - name: metrics
-          port: ${toString port}
-          targetPort: ${toString port}
-          protocol: TCP
-    ---
-    apiVersion: v1
-    kind: Endpoints
-    metadata:
-      name: smartctl-exporter
-      namespace: ${ns}
-      labels:
-        app.kubernetes.io/name: smartctl-exporter
-    subsets:
-      - addresses:
-    ${lib.concatMapStringsSep "\n" (l: "      ${l}") (lib.splitString "\n" clusterAddresses)}
-        ports:
-          - name: metrics
-            port: ${toString port}
-            protocol: TCP
-    ---
-    apiVersion: monitoring.coreos.com/v1
-    kind: ServiceMonitor
+    apiVersion: monitoring.coreos.com/v1alpha1
+    kind: ScrapeConfig
     metadata:
       name: smartctl-exporter
       namespace: ${ns}
       labels:
         release: kube-prometheus-stack
     spec:
-      namespaceSelector:
-        matchNames:
-          - ${ns}
-      selector:
-        matchLabels:
-          app.kubernetes.io/name: smartctl-exporter
-      endpoints:
-        - port: metrics
-          interval: 60s
-          scrapeTimeout: 30s
-          relabelings:
-            - sourceLabels: [__meta_kubernetes_endpoint_hostname]
-              targetLabel: instance
-          metricRelabelings:
-            # Drop Longhorn iSCSI virtual disks (model_name="IET VIRTUAL-DISK",
-            # scsi_vendor="IET"). smartctl_exporter autodiscovers every block
-            # device, including iSCSI targets Longhorn attaches for its volumes.
-            - sourceLabels: [model_name]
-              regex: "IET VIRTUAL-DISK"
-              action: drop
-            - sourceLabels: [scsi_vendor]
-              regex: "IET"
-              action: drop
+      jobName: smartctl-exporter
+      scrapeInterval: 60s
+      scrapeTimeout: 30s
+      kubernetesSDConfigs:
+        - role: Node
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_node_address_InternalIP]
+          targetLabel: __address__
+          replacement: "$1:${toString port}"
+        - sourceLabels: [__meta_kubernetes_node_name]
+          targetLabel: instance
+      metricRelabelings:
+        # Drop Longhorn iSCSI virtual disks (model_name="IET VIRTUAL-DISK",
+        # scsi_vendor="IET"). smartctl_exporter autodiscovers every block
+        # device, including iSCSI targets Longhorn attaches for its volumes.
+        - sourceLabels: [model_name]
+          regex: "IET VIRTUAL-DISK"
+          action: drop
+        - sourceLabels: [scsi_vendor]
+          regex: "IET"
+          action: drop
   '';
 
   manifest = pkgs.writeText "smartctl-exporter-scrape.yaml" manifestText;
@@ -111,12 +70,11 @@ in
         wait_for_k3s
         ensure_namespace "${ns}"
 
+        $KUBECTL -n ${ns} delete servicemonitor,service,endpoints smartctl-exporter --ignore-not-found
         $KUBECTL apply -f ${manifest}
 
         print_success "smartctl_exporter scrape" \
-          "Endpoints: ${
-            lib.concatMapStringsSep ", " (n: "${n.name} (${n.ip}:${toString port})") clusterNodes
-          }"
+          "Discovers every cluster node on port ${toString port}"
 
         create_marker "/var/lib/smartctl-exporter-scrape-setup-done" "${configHash}"
       '';
