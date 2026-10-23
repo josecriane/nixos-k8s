@@ -116,9 +116,11 @@ wait_for_k3s() {
   if [ "${SKIP_NODE_READY:-}" = "1" ]; then
     echo "SKIP_NODE_READY=1 set, not waiting for node Ready"
   else
-    echo "Waiting for node to become Ready..."
+    local node_name
+    node_name=$(cat /proc/sys/kernel/hostname)
+    echo "Waiting for node $node_name to become Ready..."
     local ready_deadline=$((SECONDS + 300))
-    until $KUBECTL wait --for=condition=Ready node --all --timeout=60s; do
+    until $KUBECTL wait --for=condition=Ready "node/$node_name" --timeout=60s; do
       if [ $SECONDS -ge $ready_deadline ]; then
         echo "ERROR: Node did not reach Ready state within 5 minutes"
         exit 1
