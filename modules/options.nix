@@ -64,6 +64,18 @@ let
         bootstrap = bool false "Whether this node initialises the cluster and runs the cluster-wide setup units. Exactly one node sets it.";
         powerManaged = bool false "Whether the node may be suspended and woken by power management.";
         mac = nullOrStr "MAC address used for Wake-on-LAN.";
+        prefixLength = mkOption {
+          type = types.ints.between 0 32;
+          default = 24;
+          description = "Prefix length of `ip`.";
+        };
+        ipv6 = nullOrStr "Static IPv6 address of the node.";
+        ipv6PrefixLength = mkOption {
+          type = types.ints.between 0 128;
+          default = 64;
+          description = "Prefix length of `ipv6`.";
+        };
+        ipv6Gateway = nullOrStr "IPv6 default gateway, reached on-link.";
         encryption = mkOption {
           default = { };
           description = "LUKS root encryption for the node.";
@@ -184,6 +196,24 @@ let
 
         useWifi = bool false "Whether nodes connect over WiFi instead of Ethernet.";
         wifiSSID = str "" "WiFi network name when `useWifi = true`.";
+
+        network = mkOption {
+          default = { };
+          description = "Host network of every node.";
+          type = freeform {
+            interfaceMatch = str "en*" "systemd-networkd `Name=` match of the wired interface.";
+            dnsFallbacks = mkOption {
+              type = types.listOf types.str;
+              default = [
+                "1.1.1.1"
+                "8.8.8.8"
+              ];
+              description = "DNS servers that the local cache asks after `nameservers`.";
+            };
+            localDnsCache = bool true "Whether every node runs a dnsmasq cache on 127.0.0.1 in front of `nameservers`.";
+            dnsRebindProtection = bool true "Whether the local cache rejects upstream answers with private addresses. Disable it when `nameservers` resolve local names to LAN addresses.";
+          };
+        };
 
         adminUser = mkOption {
           type = types.str;

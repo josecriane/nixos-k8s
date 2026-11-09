@@ -14,6 +14,7 @@
     ./security.nix
     ./encryption.nix
     ./smart.nix
+    ./network.nix
   ];
 
   # Timezone and locale

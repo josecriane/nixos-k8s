@@ -166,6 +166,15 @@ Define your cluster nodes in the `nodes` attrset. Each key maps to a `hosts/<key
 }
 ```
 
+A host directory holds only the hardware: `hardware-configuration.nix`, `disk-config.nix`, and a `default.nix` that imports both and sets `system.stateVersion`. `modules/core/network.nix` configures the network of every node from the cluster config: the hostname, the static address on `network.interfaceMatch` (default `en*`) or on `wlan0` with `useWifi`, `/etc/hosts` for all nodes, and a dnsmasq cache on 127.0.0.1.
+
+The settings for the network:
+
+- `network.localDnsCache = false` removes dnsmasq. The nodes then use `nameservers` directly.
+- `network.dnsRebindProtection = false` accepts private addresses from `nameservers`. Set it when your DNS server resolves local names to LAN addresses.
+- `network.dnsFallbacks` sets the servers that dnsmasq asks after `nameservers`.
+- A node can set `prefixLength` (default 24), and `ipv6`, `ipv6PrefixLength` and `ipv6Gateway` for a static IPv6 address with an on-link gateway.
+
 ### Node roles
 
 | Role | What it does |
@@ -353,7 +362,7 @@ nixos-k8s/
   Makefile                           All commands
   hosts/
     server1/                         Example host config
-      default.nix                    Networking, DNS, hostname
+      default.nix                    Imports and system.stateVersion
       hardware-configuration.nix     Hardware-specific
       disk-config.nix                Disk partitioning
   modules/
@@ -364,6 +373,7 @@ nixos-k8s/
       security.nix                   Firewall, fail2ban, kernel sysctls
       encryption.nix                 LUKS disk encryption (SSH/TPM unlock)
       smart.nix                      SMART monitoring (smartd + exporter + periodic checks)
+      network.nix                    Hostname, static IP, /etc/hosts, local DNS cache
     services/                        System services (add as needed)
     kubernetes/
       lib.nix                        Nix helpers
