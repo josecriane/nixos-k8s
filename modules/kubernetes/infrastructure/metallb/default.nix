@@ -47,6 +47,7 @@ let
     };
     chart = "metallb/metallb";
     timeout = "5m";
+    values.frrk8s.enabled = false;
     manifests = [ ./config.yaml ];
     substitutions = {
       POOL_START = config.cluster.metallbPoolStart;
