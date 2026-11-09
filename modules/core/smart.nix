@@ -2,8 +2,6 @@
   config,
   lib,
   pkgs,
-  serverConfig ? { },
-  clusterNodes ? [ ],
   ...
 }:
 
@@ -13,16 +11,16 @@ let
   monitoringEnabled = config.cluster.services.monitoring;
 
   k8sCfg = config.cluster.kubernetes;
-  podCidr = k8sCfg.podCidr or "10.42.0.0/16";
-  serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
+  podCidr = k8sCfg.podCidr;
+  serviceCidr = k8sCfg.serviceCidr;
   clusterSources = lib.concatStringsSep "," (
-    (map (n: n.ip) clusterNodes)
+    (map (n: n.ip) (lib.attrValues config.cluster.nodes))
     ++ [
       podCidr
       serviceCidr
     ]
   );
-  hasCluster = clusterNodes != [ ];
+  hasCluster = (lib.attrValues config.cluster.nodes) != [ ];
 in
 {
   options.smart = {

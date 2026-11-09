@@ -6,16 +6,14 @@
   config,
   lib,
   pkgs,
-  nodeConfig,
-  serverConfig,
   ...
 }:
 
 let
-  encryption = nodeConfig.encryption or { };
-  enableEncryption = encryption.enable or false;
-  unlockMethod = encryption.unlock or "ssh"; # "ssh" or "tpm"
-  initrdSSHPort = encryption.sshPort or 2222;
+  encryption = config.cluster.node.encryption;
+  enableEncryption = encryption.enable;
+  unlockMethod = encryption.unlock; # "ssh" or "tpm"
+  initrdSSHPort = encryption.sshPort;
 in
 lib.mkIf enableEncryption {
 
@@ -31,7 +29,7 @@ lib.mkIf enableEncryption {
     ssh = {
       enable = true;
       port = initrdSSHPort;
-      authorizedKeys = serverConfig.adminSSHKeys;
+      authorizedKeys = config.cluster.adminSSHKeys;
       # Host keys for initrd SSH (generated on first boot, stored persistently)
       hostKeys = [
         "/etc/ssh/ssh_host_ed25519_key"
@@ -44,8 +42,8 @@ lib.mkIf enableEncryption {
     enable = true;
     networks."10-lan" = {
       matchConfig.Name = "en*";
-      address = [ "${nodeConfig.ip}/24" ];
-      routes = [ { Gateway = serverConfig.gateway; } ];
+      address = [ "${config.cluster.node.ip}/24" ];
+      routes = [ { Gateway = config.cluster.gateway; } ];
     };
   };
 

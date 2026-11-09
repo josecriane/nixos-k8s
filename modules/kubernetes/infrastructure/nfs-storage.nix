@@ -5,8 +5,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  nodeConfig,
   ...
 }:
 
@@ -18,14 +16,13 @@ let
 
   useNFS = config.cluster.storage.useNFS;
 
-  enabledNas = lib.filterAttrs (name: nasCfg: nasCfg.enabled or false) config.cluster.nas;
-  primaryNas = lib.findFirst (
-    nasCfg: (nasCfg.role or "all") == "media" || (nasCfg.role or "all") == "all"
-  ) null (lib.attrValues enabledNas);
+  enabledNas = lib.filterAttrs (name: nasCfg: nasCfg.enabled) config.cluster.nas;
+  primaryNas = lib.findFirst (nasCfg: nasCfg.role == "media" || nasCfg.role == "all") null (
+    lib.attrValues enabledNas
+  );
 
   nfsServer = if primaryNas != null then primaryNas.ip else "";
-  nfsExports = if primaryNas != null then (primaryNas.nfsExports or { }) else { };
-  nfsPath = nfsExports.nfsPath or "/";
+  nfsPath = if primaryNas != null then primaryNas.nfsExports.nfsPath else "/";
 
   nasMountPoint = k8s.primaryNasMountPoint;
   nasMountUnit = "${lib.replaceStrings [ "/" ] [ "-" ] (lib.removePrefix "/" nasMountPoint)}.mount";
@@ -72,7 +69,7 @@ in
     };
   };
 
-  config.systemd.services.nfs-storage-setup = {
+  config.systemd.services.nfs-storage-setup = lib.mkIf config.cluster.isBootstrap {
     description = "Setup storage for K8s services";
     after = [
       "k3s-infrastructure.target"
@@ -200,7 +197,7 @@ in
                 - key: kubernetes.io/hostname
                   operator: In
                   values:
-                  - ${nodeConfig.name}
+                  - ${config.cluster.node.name}
         ---
         apiVersion: v1
         kind: PersistentVolumeClaim
@@ -216,7 +213,7 @@ in
               storage: 500Gi
           volumeName: ${pvName}
         PVEOF
-            echo "PV/PVC ${pvcName} created (hostPath: $HOST_DATA_PATH, node: ${nodeConfig.name})"
+            echo "PV/PVC ${pvcName} created (hostPath: $HOST_DATA_PATH, node: ${config.cluster.node.name})"
           fi
 
           echo "Waiting for PVC ${pvcName} to be Bound..."

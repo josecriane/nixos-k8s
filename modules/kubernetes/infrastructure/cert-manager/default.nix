@@ -3,8 +3,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
@@ -12,7 +10,7 @@ let
 
   certBackupDir = "/var/lib/cert-backup";
   nasBackupDir = "${k8s.primaryNasMountPoint}/backups";
-  certName = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}";
+  certName = "wildcard-${config.cluster.subdomain}-${config.cluster.domain}";
   secretName = "${certName}-tls";
 
   restoreFromBackup = config.cluster.certificates.restoreFromBackup;
@@ -113,7 +111,7 @@ let
       spec:
         acme:
           server: https://acme-v02.api.letsencrypt.org/directory
-          email: ${serverConfig.acmeEmail}
+          email: ${config.cluster.acmeEmail}
           privateKeySecretRef:
             name: letsencrypt-prod-key
           solvers:
@@ -196,8 +194,8 @@ let
           name: letsencrypt-prod
           kind: ClusterIssuer
         dnsNames:
-        - "*.${serverConfig.subdomain}.${serverConfig.domain}"
-        - "${serverConfig.subdomain}.${serverConfig.domain}"
+        - "*.${config.cluster.subdomain}.${config.cluster.domain}"
+        - "${config.cluster.subdomain}.${config.cluster.domain}"
       EOF
 
       if [ "$CERT_RESTORED" = "false" ]; then
@@ -276,25 +274,27 @@ let
       TLSSTOREEOF
 
       echo "ClusterIssuer: letsencrypt-prod"
-      echo "Wildcard certificate: *.${serverConfig.subdomain}.${serverConfig.domain}"
+      echo "Wildcard certificate: *.${config.cluster.subdomain}.${config.cluster.domain}"
       echo "Status: $FINAL_STATUS ($([ "$CERT_RESTORED" = "true" ] && echo "from backup" || echo "ACME"))"
     '';
   };
 in
-lib.recursiveUpdate release {
-  age.secrets.cloudflare-api-token = {
-    file = "${secretsPath}/cloudflare-api-token.age";
-  };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.certificates.provider == "acme") (
+  lib.recursiveUpdate release {
+    age.secrets.cloudflare-api-token = {
+      file = "${config.cluster.secretsPath}/cloudflare-api-token.age";
+    };
 
-  systemd.services.cert-manager-setup = {
-    after = (release.systemd.services.cert-manager-setup.after or [ ]) ++ [
-      "k3s.service"
-      "traefik-setup.service"
-    ];
-    wants = [
-      "k3s.service"
-      "traefik-setup.service"
-    ];
-    serviceConfig.ExecStartPre = "${preHelm}";
-  };
-}
+    systemd.services.cert-manager-setup = {
+      after = (release.systemd.services.cert-manager-setup.after or [ ]) ++ [
+        "k3s.service"
+        "traefik-setup.service"
+      ];
+      wants = [
+        "k3s.service"
+        "traefik-setup.service"
+      ];
+      serviceConfig.ExecStartPre = "${preHelm}";
+    };
+  }
+)

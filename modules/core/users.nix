@@ -2,18 +2,16 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
 let
-  # Use path-arithmetic (+) instead of "${secretsPath}/..." interpolation.
+  # Use path-arithmetic (+) instead of "${config.cluster.secretsPath}/..." interpolation.
   # String interpolation forces the path to be realized in the nix store at
   # eval time, which fails when consumers pass a relative path (./secrets)
   # from a different flake. Path arithmetic keeps the path as-is so that
   # builtins.pathExists can check it in the actual filesystem.
-  adminPasswordFile = secretsPath + "/admin-password-hash.age";
+  adminPasswordFile = config.cluster.secretsPath + "/admin-password-hash.age";
   hasAdminPassword = builtins.pathExists adminPasswordFile;
   cfg = config.k8s.users;
 
@@ -89,11 +87,11 @@ in
     # on every activation (mutableUsers=true only applies at first create).
     users.mutableUsers = !hasAdminPassword;
 
-    users.users.${serverConfig.adminUser} = {
+    users.users.${config.cluster.adminUser} = {
       isNormalUser = true;
       description = "Server Administrator";
       extraGroups = [ "wheel" ];
-      openssh.authorizedKeys.keys = serverConfig.adminSSHKeys;
+      openssh.authorizedKeys.keys = config.cluster.adminSSHKeys;
       shell = pkgs.bash;
     }
     // lib.optionalAttrs hasAdminPassword {

@@ -494,7 +494,7 @@ that runs Traefik or override the policy in your own values.
 
 `L2Advertisement` is pinned to the bootstrap node via `nodeSelectors: kubernetes.io/hostname: <bootstrap>`. Without the pin, joining a new worker triggers a re-election of the gratuitous ARP owner and L2 networks frequently keep a stale ARP cache, blackholing the LB IP until speakers are restarted. Keeping the announcement on a single stable node avoids that flap.
 
-If you move the bootstrap role to another node, bump the `L2Advertisement` accordingly (the module picks up the current bootstrap from `clusterNodes`).
+If you move the bootstrap role to another node, bump the `L2Advertisement` accordingly (the module picks up the current bootstrap from `cluster.bootstrapNode`).
 
 ## Included services
 
@@ -601,9 +601,8 @@ Use `createHelmRelease` to add a new Helm chart. One function call generates the
 
    ```nix
    # modules/kubernetes/apps/my-service.nix
-   { config, lib, pkgs, serverConfig, ... }:
-   let k8s = import ../lib.nix { inherit pkgs serverConfig; }; in
-   k8s.createHelmRelease {
+   { k8s, config, lib, ... }:
+   lib.mkIf (config.cluster.isBootstrap && config.cluster.services.my-service) (k8s.createHelmRelease {
      name = "my-service";
      namespace = "my-service";
      repo = { name = "my-repo"; url = "https://charts.example.com"; };
@@ -624,16 +623,10 @@ Use `createHelmRelease` to add a new Helm chart. One function call generates the
      extraScript = "";        # optional: extra bash after helm install
      runtimeScript = "";      # optional: bash run first, to resolve deploy-time values
      runtimeSets = [ ];       # optional: "key=$VAR" strings appended as --set
-   }
+   })
    ```
 
-2. Add the toggle to `config.example.nix` and import in `modules/kubernetes/default.nix`:
-
-   ```nix
-   ++ lib.optionals (isBootstrap && (enabled "my-service")) [
-     ./apps/my-service.nix
-   ]
-   ```
+2. Add the module to the `imports` list in `modules/kubernetes/apps/default.nix`. Declare the toggle under `services` in `modules/options.nix` and add it to `config.example.nix`. Every module is imported on every node, and its `lib.mkIf` decides whether it is active.
 
 3. Enable and deploy:
    ```bash
@@ -657,7 +650,7 @@ When consuming `nixos-k8s` as a flake input, you extend the base cluster through
 | `extraModules` | list of modules | Extra NixOS modules loaded on every node (your own `modules/core`, `modules/kubernetes`, etc.) |
 | `extraSpecialArgs` | attrset | Extra values merged into `specialArgs` (e.g. pass your own flake inputs into modules) |
 
-Every module (base and extra) receives `serverConfig`, `nodeConfig`, `clusterNodes`, `secretsPath`, and `inputs` via `specialArgs`, plus anything you add through `extraSpecialArgs`.
+Every module (base and extra) receives `k8s` and `inputs` via `specialArgs`, plus anything you add through `extraSpecialArgs`. The cluster configuration is the `cluster` option: modules read `config.cluster`, the current node as `config.cluster.node`, the bootstrap node as `config.cluster.bootstrapNode`, and the secrets directory as `config.cluster.secretsPath`.
 
 ### NixOS options exposed by the base
 
@@ -741,7 +734,7 @@ k8s.cleanup.serviceMap.my-service = {
 };
 ```
 
-When `serverConfig.services.my-service = false`, the `k8s-cleanup` service removes the marker files and runs `extraCleanup`. K8s resources themselves are scaled down (not deleted) to preserve PVCs.
+When `config.cluster.services.my-service = false`, the `k8s-cleanup` service removes the marker files and runs `extraCleanup`. K8s resources themselves are scaled down (not deleted) to preserve PVCs.
 
 ### Example: minimal consumer flake
 
@@ -760,7 +753,7 @@ When `serverConfig.services.my-service = false`, the `k8s-cleanup` service remov
 }
 ```
 
-Where `./modules/my-services.nix` is a regular NixOS module that can read `serverConfig`, set `k8s.storage.nfs.directoryLayout`, append to `k8s.cleanup.serviceMap`, and define its own systemd services ordered against the `k3s-*.target` tiers.
+Where `./modules/my-services.nix` is a regular NixOS module that can read `config.cluster`, set `k8s.storage.nfs.directoryLayout`, append to `k8s.cleanup.serviceMap`, and define its own systemd services ordered against the `k3s-*.target` tiers.
 
 ## Boot sequence
 

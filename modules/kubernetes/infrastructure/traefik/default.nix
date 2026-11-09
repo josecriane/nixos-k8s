@@ -3,7 +3,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
@@ -19,7 +18,7 @@ let
     "--entrypoints.web.http.redirections.entryPoint.permanent=true"
   ]
   ++ lib.optionals isAcme [
-    "--certificatesresolvers.default.acme.email=${serverConfig.acmeEmail}"
+    "--certificatesresolvers.default.acme.email=${config.cluster.acmeEmail}"
     "--certificatesresolvers.default.acme.storage=/data/acme.json"
     "--certificatesresolvers.default.acme.tlschallenge=true"
   ];
@@ -31,7 +30,7 @@ let
     echo "Waiting for Traefik to get LoadBalancer IP..."
     for i in $(seq 1 30); do
       TRAEFIK_IP=$($KUBECTL get svc -n traefik-system traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-      if [ "$TRAEFIK_IP" = "${serverConfig.traefikIP}" ]; then
+      if [ "$TRAEFIK_IP" = "${config.cluster.traefikIP}" ]; then
         echo "Traefik got IP: $TRAEFIK_IP"
         break
       fi
@@ -58,7 +57,7 @@ let
       ADDITIONAL_ARGS = builtins.toJSON additionalArgs;
     }
     // lib.optionalAttrs useMetalLB {
-      TRAEFIK_IP = serverConfig.traefikIP;
+      TRAEFIK_IP = config.cluster.traefikIP;
     };
     extraScript = ''
       echo "Waiting for Traefik pod to be ready..."
@@ -74,9 +73,11 @@ let
     '';
   };
 in
-lib.recursiveUpdate release {
-  systemd.services.traefik-setup = {
-    after = (release.systemd.services.traefik-setup.after or [ ]) ++ lbUnits;
-    wants = lbUnits;
-  };
-}
+lib.mkIf (config.cluster.isBootstrap) (
+  lib.recursiveUpdate release {
+    systemd.services.traefik-setup = {
+      after = (release.systemd.services.traefik-setup.after or [ ]) ++ lbUnits;
+      wants = lbUnits;
+    };
+  }
+)

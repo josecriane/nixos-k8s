@@ -37,52 +37,38 @@
           extraSpecialArgs ? { },
         }:
         let
-          cfg = nixpkgs.lib.recursiveUpdate (import ./modules/cluster-defaults.nix) clusterConfig;
-
-          nodes = cfg.nodes;
-          bootstrapName = builtins.head (
-            builtins.attrNames (nixpkgs.lib.filterAttrs (_: n: n.bootstrap or false) nodes)
-          );
-          bootstrapNode = nodes.${bootstrapName};
-
           mkHost =
             nodeName:
             let
-              nodeCfg = nodes.${nodeName};
-              nodeConfig = nodeCfg // {
-                name = nodeName;
-                bootstrapIP = bootstrapNode.ip;
+              host = nixpkgs.lib.nixosSystem {
+                inherit system;
+                specialArgs = {
+                  inherit inputs;
+                  k8s = import ./modules/kubernetes/lib.nix {
+                    inherit pkgs;
+                    cluster = host.config.cluster;
+                  };
+                }
+                // extraSpecialArgs;
+                modules = [
+                  disko.nixosModules.disko
+                  agenix.nixosModules.default
+                  {
+                    cluster = clusterConfig // {
+                      inherit nodeName secretsPath;
+                    };
+                  }
+                  "${hostsPath}/${nodeName}"
+                  "${self}/modules/core"
+                  "${self}/modules/services"
+                  "${self}/modules/kubernetes"
+                ]
+                ++ extraModules;
               };
-              clusterNodes = nixpkgs.lib.mapAttrsToList (name: cfg: cfg // { inherit name; }) nodes;
             in
-            nixpkgs.lib.nixosSystem {
-              inherit system;
-              specialArgs = {
-                inherit
-                  inputs
-                  secretsPath
-                  nodeConfig
-                  clusterNodes
-                  ;
-                serverConfig = cfg;
-                k8s = import ./modules/kubernetes/lib.nix {
-                  inherit pkgs;
-                  serverConfig = cfg;
-                };
-              }
-              // extraSpecialArgs;
-              modules = [
-                disko.nixosModules.disko
-                agenix.nixosModules.default
-                "${hostsPath}/${nodeName}"
-                "${self}/modules/core"
-                "${self}/modules/services"
-                "${self}/modules/kubernetes"
-              ]
-              ++ extraModules;
-            };
+            host;
         in
-        builtins.mapAttrs (name: _: mkHost name) nodes;
+        builtins.mapAttrs (name: _: mkHost name) clusterConfig.nodes;
 
       # Standalone mode: use config.nix from this repo if it exists
       hasLocalConfig = builtins.pathExists "${self}/config.nix";

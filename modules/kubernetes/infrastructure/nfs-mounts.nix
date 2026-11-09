@@ -5,25 +5,23 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
 let
   useNFS = config.cluster.storage.useNFS;
 
-  enabledNas = lib.filterAttrs (name: cfg: cfg.enabled or false) config.cluster.nas;
-  primaryNas = lib.findFirst (
-    cfg: (cfg.role or "all") == "media" || (cfg.role or "all") == "all"
-  ) null (lib.attrValues enabledNas);
+  enabledNas = lib.filterAttrs (name: cfg: cfg.enabled) config.cluster.nas;
+  primaryNas = lib.findFirst (cfg: cfg.role == "media" || cfg.role == "all") null (
+    lib.attrValues enabledNas
+  );
 
   nfsServer = if primaryNas != null then primaryNas.ip else "";
-  nfsExports = if primaryNas != null then (primaryNas.nfsExports or { }) else { };
-  nfsPath = nfsExports.nfsPath or "/";
+  nfsPath = if primaryNas != null then primaryNas.nfsExports.nfsPath else "/";
 
-  secondaryNasList = lib.filter (
-    cfg: (cfg.enabled or false) && (cfg.mediaPaths or [ ]) != [ ] && cfg != primaryNas
-  ) (lib.attrValues config.cluster.nas);
+  secondaryNasList = lib.filter (cfg: (cfg.enabled) && cfg.mediaPaths != [ ] && cfg != primaryNas) (
+    lib.attrValues config.cluster.nas
+  );
 
   nasMountPoint = k8s.primaryNasMountPoint;
 in
@@ -60,7 +58,7 @@ in
       acc: nasCfg:
       let
         nasMount = k8s.nasMountPointOf nasCfg;
-        nasNfsPath = (nasCfg.nfsExports or { }).nfsPath or "/";
+        nasNfsPath = nasCfg.nfsExports.nfsPath;
       in
       acc
       // {

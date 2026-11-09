@@ -1,6 +1,6 @@
 # Shared helpers for Kubernetes modules
-# Provided to every module as the `k8s` argument (see specialArgs in flake.nix).
-{ pkgs, serverConfig }:
+# Provided to every module as the `k8s` argument (see mkCluster in flake.nix).
+{ pkgs, cluster }:
 
 let
 
@@ -10,11 +10,11 @@ let
   yq = "${pkgs.yq-go}/bin/yq";
   openssl = "${pkgs.openssl}/bin/openssl";
 
-  domain = serverConfig.domain;
-  subdomain = serverConfig.subdomain;
+  domain = cluster.domain;
+  subdomain = cluster.subdomain;
   certSecret = "wildcard-${subdomain}-${domain}-tls";
 
-  k8sCfg = serverConfig.kubernetes or { };
+  k8sCfg = cluster.kubernetes;
   engine = k8sCfg.engine;
   kubeconfigPath =
     if engine == "k3s" then "/etc/rancher/k3s/k3s.yaml" else "/etc/kubernetes/cluster-admin.kubeconfig";
@@ -22,14 +22,12 @@ in
 rec {
   primaryNas =
     let
-      enabled = pkgs.lib.filterAttrs (_: cfg: cfg.enabled or false) (serverConfig.nas or { });
-      withNames = pkgs.lib.mapAttrsToList (name: cfg: cfg // { inherit name; }) enabled;
+      enabled = pkgs.lib.filterAttrs (_: cfg: cfg.enabled) cluster.nas;
+      withNames = pkgs.lib.attrValues enabled;
     in
-    pkgs.lib.findFirst (
-      cfg: (cfg.role or "all") == "media" || (cfg.role or "all") == "all"
-    ) null withNames;
+    pkgs.lib.findFirst (cfg: cfg.role == "media" || cfg.role == "all") null withNames;
 
-  nasMountPointOf = cfg: "/mnt/${cfg.hostname or cfg.name}";
+  nasMountPointOf = cfg: "/mnt/${cfg.hostname}";
 
   primaryNasMountPoint = if primaryNas != null then nasMountPointOf primaryNas else "/mnt/nas";
 
@@ -50,7 +48,7 @@ rec {
     export CERT_SECRET="${certSecret}"
     export KUBECONFIG="${kubeconfigPath}"
     export K8S_ENGINE="${engine}"
-    export K8S_CNI="${k8sCfg.cni or "flannel"}"
+    export K8S_CNI="${k8sCfg.cni}"
     source ${./lib.sh}
   '';
 
@@ -90,16 +88,16 @@ rec {
   # Returns an attrset with: { systemd.services.<name>-setup = ...; }
   # Render a values YAML file with token substitution.
   # Auto-populates __TIMEZONE__, __PUID__, __PGID__, __DOMAIN__, __SUBDOMAIN__
-  # from serverConfig. Caller-provided `extra` attrset adds/overrides tokens
+  # from cluster. Caller-provided `extra` attrset adds/overrides tokens
   # (e.g. { IMAGE_TAG = "v1.2.3"; }) and is referenced as __IMAGE_TAG__ in the
   # YAML. Values that are not strings are passed through `toString`.
   renderValues =
     name: yamlFile: extra:
     let
       common = {
-        TIMEZONE = serverConfig.timezone;
-        PUID = toString (serverConfig.puid);
-        PGID = toString (serverConfig.pgid);
+        TIMEZONE = cluster.timezone;
+        PUID = toString (cluster.puid);
+        PGID = toString (cluster.pgid);
         DOMAIN = domain;
         SUBDOMAIN = subdomain;
       };
@@ -156,7 +154,7 @@ rec {
       valuesFile ? null,
       # Token substitutions applied to valuesFile and manifests. Common tokens
       # (TIMEZONE, PUID, PGID, DOMAIN, SUBDOMAIN) are always auto-populated
-      # from serverConfig; this attrset adds/overrides more.
+      # from cluster; this attrset adds/overrides more.
       substitutions ? { },
       # Extra YAML manifests to apply after helm install. Each file is
       # token-substituted (same tokens as valuesFile) and applied with
@@ -385,158 +383,4 @@ rec {
       };
     };
 
-  # ============================================
-  # LINUX SERVER DEPLOYMENT (raw YAML, for non-Helm containers)
-  # ============================================
-
-  createLinuxServerDeployment =
-    {
-      name,
-      namespace,
-      image,
-      port,
-      configPVC,
-      apiKeySecret ? null,
-      extraVolumes ? [ ],
-      extraVolumeMounts ? [ ],
-      extraEnv ? [ ],
-      resources ? {
-        requests = {
-          cpu = "50m";
-          memory = "128Mi";
-        };
-        limits = {
-          memory = "512Mi";
-        };
-      },
-    }:
-    let
-      puid = toString (serverConfig.puid);
-      pgid = toString (serverConfig.pgid);
-
-      volumeMountsStr = builtins.concatStringsSep "\n        " (
-        [
-          "- name: config\n          mountPath: /config"
-        ]
-        ++ extraVolumeMounts
-      );
-
-      volumesStr = builtins.concatStringsSep "\n      " (
-        [
-          "- name: config\n        persistentVolumeClaim:\n          claimName: ${configPVC}"
-        ]
-        ++ extraVolumes
-        ++ (
-          if apiKeySecret != null then
-            [
-              "- name: api-key-secret\n        secret:\n          secretName: ${apiKeySecret}"
-            ]
-          else
-            [ ]
-        )
-      );
-
-      envStr = builtins.concatStringsSep "\n        " (
-        [
-          "- name: PUID\n          value: \"${puid}\""
-          "- name: PGID\n          value: \"${pgid}\""
-          "- name: TZ\n          value: \"${serverConfig.timezone}\""
-        ]
-        ++ extraEnv
-      );
-
-      rawInitContainer = ''
-        initContainers:
-        - name: init-api-key
-          image: busybox:1.37.0
-          command: ['sh', '-c']
-          args:
-          - |
-            API_KEY=$(cat /secrets/api-key)
-            if [ ! -f /config/config.xml ]; then
-              echo "Pre-seeding config.xml with stable API key..."
-              cat > /config/config.xml <<XMLEOF
-            <Config>
-              <ApiKey>''${API_KEY}</ApiKey>
-              <AnalyticsEnabled>False</AnalyticsEnabled>
-            </Config>
-            XMLEOF
-              chown ${puid}:${pgid} /config/config.xml
-              echo "config.xml created with stable API key"
-            else
-              CURRENT_KEY=$(sed -n 's/.*<ApiKey>\(.*\)<\/ApiKey>.*/\1/p' /config/config.xml)
-              if [ "$CURRENT_KEY" != "$API_KEY" ]; then
-                echo "Updating API key in existing config.xml..."
-                sed -i "s|<ApiKey>.*</ApiKey>|<ApiKey>''${API_KEY}</ApiKey>|" /config/config.xml
-                echo "API key updated"
-              else
-                echo "config.xml API key matches secret, no change needed"
-              fi
-            fi
-          volumeMounts:
-          - name: config
-            mountPath: /config
-          - name: api-key-secret
-            mountPath: /secrets
-            readOnly: true'';
-
-      initContainerYaml =
-        if apiKeySecret != null then
-          builtins.concatStringsSep "\n" (
-            map (line: "      " + line) (
-              pkgs.lib.splitString "\n" (pkgs.lib.removePrefix "\n" rawInitContainer)
-            )
-          )
-        else
-          "";
-    in
-    ''
-          cat <<'EOF' | ${kubectl} apply -f -
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ${name}
-        namespace: ${namespace}
-      spec:
-        replicas: 1
-        selector:
-          matchLabels:
-            app: ${name}
-        template:
-          metadata:
-            labels:
-              app: ${name}
-          spec:
-      ${initContainerYaml}
-            containers:
-            - name: ${name}
-              image: ${image}
-              ports:
-              - containerPort: ${toString port}
-              env:
-              ${envStr}
-              resources:
-                requests:
-                  cpu: ${resources.requests.cpu}
-                  memory: ${resources.requests.memory}
-                limits:
-                  memory: ${resources.limits.memory}
-              volumeMounts:
-              ${volumeMountsStr}
-            volumes:
-            ${volumesStr}
-      ---
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: ${name}
-        namespace: ${namespace}
-      spec:
-        selector:
-          app: ${name}
-        ports:
-        - port: ${toString port}
-          targetPort: ${toString port}
-      EOF
-    '';
 }

@@ -6,7 +6,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
@@ -66,13 +65,13 @@ in
     default = { };
     description = ''
       Map of service toggle name -> cleanup spec. When a toggle in
-      `serverConfig.services.<name>` is false, the service's markers are
+      `config.cluster.services.<name>` is false, the service's markers are
       removed and extraCleanup runs. K8s resources are left untouched here
       (scaledown handles them to preserve PVCs).
     '';
   };
 
-  config = lib.mkIf hasDisabled {
+  config = lib.mkIf (config.cluster.isBootstrap && hasDisabled) {
     systemd.services.k8s-cleanup = {
       description = "Cleanup disabled K8s services";
       after = [ "k3s-infrastructure.target" ];

@@ -1,11 +1,8 @@
-{
-  nodeConfig,
-  ...
-}:
+{ config, ... }:
 
 let
-  encryption = nodeConfig.encryption or { };
-  enableEncryption = encryption.enable or false;
+  encryption = config.cluster.node.encryption;
+  enableEncryption = encryption.enable;
 in
 {
   disko.devices = {

@@ -3,18 +3,16 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  nodeConfig,
   ...
 }:
 
 let
-  isBootstrap = nodeConfig.bootstrap or false;
+  isBootstrap = config.cluster.isBootstrap;
 
   longhornCfg = config.cluster.storage.longhorn;
-  replicaCount = longhornCfg.replicaCount or 2;
-  defaultClass = longhornCfg.defaultStorageClass or false;
-  ingressCfg = longhornCfg.ingress or null;
+  replicaCount = longhornCfg.replicaCount;
+  defaultClass = longhornCfg.defaultStorageClass;
+  ingressCfg = longhornCfg.ingress;
 
   release = k8s.createHelmRelease {
     name = "longhorn";
@@ -41,7 +39,7 @@ let
         }
       else
         null;
-    middlewares = ingressCfg.middlewares or [ ];
+    middlewares = if ingressCfg != null then ingressCfg.middlewares else [ ];
     extraScript = ''
       echo "Waiting for Longhorn manager DaemonSet..."
       wait_for_pod longhorn-system "app=longhorn-manager"
@@ -62,39 +60,41 @@ let
     '';
   };
 in
-lib.mkMerge [
-  # Host-level prerequisites applied to every node so Longhorn can schedule
-  # volume replicas anywhere. The manager runs as a DaemonSet and every
-  # worker node needs open-iscsi + kernel modules to attach block devices.
-  {
-    services.openiscsi = {
-      enable = true;
-      name = "iqn.2025-01.homelab:${nodeConfig.name or "node"}";
-    };
+lib.mkIf (config.cluster.storage.longhorn.enable) (
+  lib.mkMerge [
+    # Host-level prerequisites applied to every node so Longhorn can schedule
+    # volume replicas anywhere. The manager runs as a DaemonSet and every
+    # worker node needs open-iscsi + kernel modules to attach block devices.
+    {
+      services.openiscsi = {
+        enable = true;
+        name = "iqn.2025-01.homelab:${config.cluster.node.name}";
+      };
 
-    boot.kernelModules = [
-      "iscsi_tcp"
-      "nfs"
-      "nfsv4"
-      "dm_crypt"
-    ];
+      boot.kernelModules = [
+        "iscsi_tcp"
+        "nfs"
+        "nfsv4"
+        "dm_crypt"
+      ];
 
-    environment.systemPackages = [
-      pkgs.openiscsi
-      pkgs.nfs-utils
-    ];
+      environment.systemPackages = [
+        pkgs.openiscsi
+        pkgs.nfs-utils
+      ];
 
-    # Longhorn manager uses `nsenter` to run iscsiadm inside the host mount
-    # namespace and resolves the binary through the container's PATH
-    # (typically /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:...).
-    # NixOS places binaries under /run/current-system/sw/bin which isn't in
-    # that PATH, so we expose the needed host utilities at well-known paths.
-    systemd.tmpfiles.rules = [
-      "L+ /usr/local/sbin/iscsiadm - - - - ${pkgs.openiscsi}/bin/iscsiadm"
-      "L+ /usr/local/bin/mount.nfs - - - - ${pkgs.nfs-utils}/bin/mount.nfs"
-      "L+ /usr/local/bin/mount.nfs4 - - - - ${pkgs.nfs-utils}/bin/mount.nfs4"
-    ];
-  }
-  # Helm release installed once from the bootstrap node.
-  (lib.mkIf isBootstrap release)
-]
+      # Longhorn manager uses `nsenter` to run iscsiadm inside the host mount
+      # namespace and resolves the binary through the container's PATH
+      # (typically /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:...).
+      # NixOS places binaries under /run/current-system/sw/bin which isn't in
+      # that PATH, so we expose the needed host utilities at well-known paths.
+      systemd.tmpfiles.rules = [
+        "L+ /usr/local/sbin/iscsiadm - - - - ${pkgs.openiscsi}/bin/iscsiadm"
+        "L+ /usr/local/bin/mount.nfs - - - - ${pkgs.nfs-utils}/bin/mount.nfs"
+        "L+ /usr/local/bin/mount.nfs4 - - - - ${pkgs.nfs-utils}/bin/mount.nfs4"
+      ];
+    }
+    # Helm release installed once from the bootstrap node.
+    (lib.mkIf isBootstrap release)
+  ]
+)

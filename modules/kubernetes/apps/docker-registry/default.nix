@@ -26,8 +26,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
@@ -89,14 +87,16 @@ let
     ];
   };
 in
-lib.recursiveUpdate
-  {
-    age.secrets.registry-htpasswd = {
-      file = "${secretsPath}/registry-htpasswd.age";
-    };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-registry) (
+  lib.recursiveUpdate
+    {
+      age.secrets.registry-htpasswd = {
+        file = "${config.cluster.secretsPath}/registry-htpasswd.age";
+      };
 
-    systemd.services = registry.systemd.services // ui.systemd.services;
-  }
-  {
-    systemd.services.docker-registry-setup.serviceConfig.ExecStartPre = "${preHelm}";
-  }
+      systemd.services = registry.systemd.services // ui.systemd.services;
+    }
+    {
+      systemd.services.docker-registry-setup.serviceConfig.ExecStartPre = "${preHelm}";
+    }
+)

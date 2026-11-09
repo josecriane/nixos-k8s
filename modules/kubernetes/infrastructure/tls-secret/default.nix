@@ -6,18 +6,16 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
 let
   markerFile = "/var/lib/tls-secret-setup-done";
-  certSecret = "wildcard-${serverConfig.subdomain}-${serverConfig.domain}-tls";
+  certSecret = "wildcard-${config.cluster.subdomain}-${config.cluster.domain}-tls";
   isManual = config.cluster.certificates.provider == "manual";
 
-  certFile = "${secretsPath}/tls-cert.age";
-  keyFile = "${secretsPath}/tls-key.age";
+  certFile = "${config.cluster.secretsPath}/tls-cert.age";
+  keyFile = "${config.cluster.secretsPath}/tls-key.age";
 
   certsPresent = builtins.pathExists certFile && builtins.pathExists keyFile;
 
@@ -33,60 +31,62 @@ let
     else
       "";
 in
-lib.mkIf isManual {
-  age.secrets.tls-cert = {
-    file = certFile;
-  };
-  age.secrets.tls-key = {
-    file = keyFile;
-  };
-
-  systemd.services.tls-secret-setup = {
-    description = "Upload TLS certificate to Kubernetes";
-    after = [ "traefik-setup.service" ];
-    wants = [ "traefik-setup.service" ];
-    wantedBy = [ "k3s-infrastructure.target" ];
-    before = [ "k3s-infrastructure.target" ];
-
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ProtectHome = true;
-      PrivateTmp = true;
-      NoNewPrivileges = true;
-      ExecStart = pkgs.writeShellScript "tls-secret-setup" ''
-        ${k8s.libShSource}
-
-        setup_preamble_hash "${markerFile}" "TLS certificate" "${certContentHash}"
-        wait_for_k3s
-
-        echo "Uploading TLS certificate to cluster..."
-
-        $KUBECTL create secret tls "${certSecret}" \
-          --cert="${config.age.secrets.tls-cert.path}" \
-          --key="${config.age.secrets.tls-key.path}" \
-          --namespace=traefik-system \
-          --dry-run=client -o yaml | $KUBECTL apply -f -
-
-        echo "Certificate uploaded to traefik-system/${certSecret}"
-
-        # Default TLSStore so IngressRoutes without explicit tls.secretName use
-        # the wildcard cert. Avoids copying the secret into every namespace.
-        ${k8s.applyManifestsScript {
-          name = "tls-secret";
-          manifests = [ ./manifests.yaml ];
-          substitutions = {
-            CERT_SECRET = certSecret;
-          };
-        }}
-
-        print_success "TLS certificate" \
-          "Secret: ${certSecret}" \
-          "Namespace: traefik-system" \
-          "Default TLSStore: traefik-system/default"
-
-        create_marker "${markerFile}" "${certContentHash}"
-      '';
+lib.mkIf (config.cluster.isBootstrap) (
+  lib.mkIf isManual {
+    age.secrets.tls-cert = {
+      file = certFile;
     };
-  };
-}
+    age.secrets.tls-key = {
+      file = keyFile;
+    };
+
+    systemd.services.tls-secret-setup = {
+      description = "Upload TLS certificate to Kubernetes";
+      after = [ "traefik-setup.service" ];
+      wants = [ "traefik-setup.service" ];
+      wantedBy = [ "k3s-infrastructure.target" ];
+      before = [ "k3s-infrastructure.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ProtectHome = true;
+        PrivateTmp = true;
+        NoNewPrivileges = true;
+        ExecStart = pkgs.writeShellScript "tls-secret-setup" ''
+          ${k8s.libShSource}
+
+          setup_preamble_hash "${markerFile}" "TLS certificate" "${certContentHash}"
+          wait_for_k3s
+
+          echo "Uploading TLS certificate to cluster..."
+
+          $KUBECTL create secret tls "${certSecret}" \
+            --cert="${config.age.secrets.tls-cert.path}" \
+            --key="${config.age.secrets.tls-key.path}" \
+            --namespace=traefik-system \
+            --dry-run=client -o yaml | $KUBECTL apply -f -
+
+          echo "Certificate uploaded to traefik-system/${certSecret}"
+
+          # Default TLSStore so IngressRoutes without explicit tls.secretName use
+          # the wildcard cert. Avoids copying the secret into every namespace.
+          ${k8s.applyManifestsScript {
+            name = "tls-secret";
+            manifests = [ ./manifests.yaml ];
+            substitutions = {
+              CERT_SECRET = certSecret;
+            };
+          }}
+
+          print_success "TLS certificate" \
+            "Secret: ${certSecret}" \
+            "Namespace: traefik-system" \
+            "Default TLSStore: traefik-system/default"
+
+          create_marker "${markerFile}" "${certContentHash}"
+        '';
+      };
+    };
+  }
+)

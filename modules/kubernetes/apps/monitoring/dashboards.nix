@@ -11,14 +11,13 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
 let
   ns = "monitoring";
 
-  nasEnabled = lib.any (cfg: cfg.enabled or false) (lib.attrValues (serverConfig.nas or { }));
+  nasEnabled = lib.any (cfg: cfg.enabled) (lib.attrValues config.cluster.nas);
 
   dashboards = {
     home = ./dashboards/home.json;

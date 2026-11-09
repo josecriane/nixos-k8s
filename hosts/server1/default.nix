@@ -1,10 +1,6 @@
 {
   config,
   lib,
-  serverConfig,
-  nodeConfig,
-  clusterNodes,
-  secretsPath,
   ...
 }:
 
@@ -15,17 +11,19 @@
   ];
 
   # Hostname
-  networking.hostName = nodeConfig.name;
+  networking.hostName = config.cluster.node.name;
 
   # Static /etc/hosts for all cluster nodes
-  networking.extraHosts = builtins.concatStringsSep "\n" (map (n: "${n.ip} ${n.name}") clusterNodes);
+  networking.extraHosts = builtins.concatStringsSep "\n" (
+    map (n: "${n.ip} ${n.name}") (lib.attrValues config.cluster.nodes)
+  );
 
   # Local DNS cache
   services.dnsmasq = {
     enable = true;
     settings = {
       cache-size = 1000;
-      server = serverConfig.nameservers ++ [
+      server = config.cluster.nameservers ++ [
         "1.1.1.1"
         "8.8.8.8"
       ];
@@ -41,7 +39,7 @@
   networking = {
     useDHCP = false;
     useNetworkd = true;
-    nameservers = [ "127.0.0.1" ] ++ serverConfig.nameservers;
+    nameservers = [ "127.0.0.1" ] ++ config.cluster.nameservers;
 
     # Prefer IPv4 over IPv6 for outgoing connections
     getaddrinfo.precedence = {
@@ -53,7 +51,7 @@
     # WiFi or Ethernet depending on configuration
     wireless = lib.mkIf (config.cluster.useWifi) {
       enable = true;
-      networks."${serverConfig.wifiSSID}" = {
+      networks."${config.cluster.wifiSSID}" = {
         pskRaw = "ext:wifi_psk";
       };
     };
@@ -67,17 +65,17 @@
       if (config.cluster.useWifi) then
         {
           matchConfig.Name = "wlan0";
-          address = [ "${nodeConfig.ip}/24" ];
-          routes = [ { Gateway = serverConfig.gateway; } ];
-          dns = serverConfig.nameservers;
+          address = [ "${config.cluster.node.ip}/24" ];
+          routes = [ { Gateway = config.cluster.gateway; } ];
+          dns = config.cluster.nameservers;
           linkConfig.RequiredForOnline = "routable";
         }
       else
         {
           matchConfig.Name = "en*";
-          address = [ "${nodeConfig.ip}/24" ];
-          routes = [ { Gateway = serverConfig.gateway; } ];
-          dns = serverConfig.nameservers;
+          address = [ "${config.cluster.node.ip}/24" ];
+          routes = [ { Gateway = config.cluster.gateway; } ];
+          dns = config.cluster.nameservers;
           linkConfig.RequiredForOnline = "routable";
           networkConfig = {
             LinkLocalAddressing = "ipv4";
@@ -88,7 +86,7 @@
 
   # Secret for WiFi password (if using WiFi)
   age.secrets.wifi-password = lib.mkIf (config.cluster.useWifi) {
-    file = "${secretsPath}/wifi-password.age";
+    file = "${config.cluster.secretsPath}/wifi-password.age";
     path = "/run/secrets/wifi_psk";
   };
 

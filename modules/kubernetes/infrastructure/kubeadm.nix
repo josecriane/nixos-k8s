@@ -4,31 +4,28 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  nodeConfig,
-  clusterNodes,
-  secretsPath,
   ...
 }:
 
 let
   k8sCfg = config.cluster.kubernetes;
-  podCidr = k8sCfg.podCidr or "10.42.0.0/16";
-  serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
-  cni = k8sCfg.cni or "flannel";
+  podCidr = k8sCfg.podCidr;
+  serviceCidr = k8sCfg.serviceCidr;
+  cni = k8sCfg.cni;
 
-  isServer = nodeConfig.role == "server";
-  isAgent = nodeConfig.role == "agent";
-  isBootstrap = nodeConfig.bootstrap or false;
-  isHA = builtins.length (builtins.filter (n: n.role == "server") clusterNodes) > 1;
+  isServer = config.cluster.node.role == "server";
+  isAgent = config.cluster.node.role == "agent";
+  isBootstrap = config.cluster.isBootstrap;
+  isHA =
+    builtins.length (builtins.filter (n: n.role == "server") (lib.attrValues config.cluster.nodes)) > 1;
 
   # Kubelet resource reservations protect the OS + control plane from being
   # starved by application pods (in particular CI runners doing parallel
   # builds). Defaults are conservative for small nodes; bump per-node via
-  # `nodeConfig.kubelet.{systemReserved,kubeReserved}` in config.nix.
-  kubeletCfg = nodeConfig.kubelet or { };
-  systemReserved = kubeletCfg.systemReserved or "cpu=500m,memory=512Mi";
-  kubeReserved = kubeletCfg.kubeReserved or "cpu=500m,memory=512Mi";
+  # `config.cluster.node.kubelet.{systemReserved,kubeReserved}` in config.nix.
+  kubeletCfg = config.cluster.node.kubelet;
+  systemReserved = kubeletCfg.systemReserved;
+  kubeReserved = kubeletCfg.kubeReserved;
 
   kubeconfigPath = "/etc/kubernetes/cluster-admin.kubeconfig";
 
@@ -36,11 +33,11 @@ let
   # before certmgr starts (certmgr uses them to authenticate its CSR to
   # cfssl). See scripts/sync-bootstrap-secrets.sh for how these files
   # are populated after the first `make install NODE=<bootstrap>`.
-  hasBootstrapCa = builtins.pathExists "${secretsPath}/kubernetes-ca.age";
-  hasBootstrapToken = builtins.pathExists "${secretsPath}/kubernetes-apitoken.age";
+  hasBootstrapCa = builtins.pathExists "${config.cluster.secretsPath}/kubernetes-ca.age";
+  hasBootstrapToken = builtins.pathExists "${config.cluster.secretsPath}/kubernetes-apitoken.age";
   wantsBootstrapCerts = (!isBootstrap) && hasBootstrapCa && hasBootstrapToken;
 in
-{
+lib.mkIf (config.cluster.kubernetes.engine == "kubeadm") ({
   # Kubernetes cluster via NixOS module
   services.kubernetes = {
     roles =
@@ -52,8 +49,8 @@ in
       else
         [ "node" ];
 
-    masterAddress = nodeConfig.bootstrapIP;
-    apiserverAddress = "https://${nodeConfig.bootstrapIP}:6443";
+    masterAddress = config.cluster.bootstrapNode.ip;
+    apiserverAddress = "https://${config.cluster.bootstrapNode.ip}:6443";
 
     # PKI: auto-generate on master, distribute CA to workers
     easyCerts = true;
@@ -67,7 +64,7 @@ in
       { serviceClusterIpRange = serviceCidr; }
       (lib.mkIf isServer {
         enable = true;
-        advertiseAddress = nodeConfig.ip;
+        advertiseAddress = config.cluster.node.ip;
         securePort = 6443;
         allowPrivileged = true;
         # NodeRestriction plus front-proxy request header auth. The NixOS
@@ -97,13 +94,13 @@ in
     kubelet = {
       enable = true;
       extraOpts = builtins.concatStringsSep " " [
-        "--node-ip=${nodeConfig.ip}"
+        "--node-ip=${config.cluster.node.ip}"
         "--system-reserved=${systemReserved}"
         "--kube-reserved=${kubeReserved}"
         "--eviction-hard=memory.available<256Mi,nodefs.available<10%"
       ];
       kubeconfig = {
-        server = "https://${nodeConfig.bootstrapIP}:6443";
+        server = "https://${config.cluster.bootstrapNode.ip}:6443";
       };
       # When the CNI is Calico, also expose its plugin binaries to kubelet.
       # NixOS module recreates /opt/cni/bin on each kubelet restart using
@@ -148,7 +145,7 @@ in
             fallthrough in-addr.arpa ip6.arpa
           }
           prometheus :10055
-          forward . ${builtins.concatStringsSep " " serverConfig.nameservers} {
+          forward . ${builtins.concatStringsSep " " config.cluster.nameservers} {
             policy sequential
           }
           cache 30
@@ -263,7 +260,7 @@ in
   networking.firewall.extraCommands =
     let
       sources = lib.concatStringsSep "," (
-        (map (n: n.ip) clusterNodes)
+        (map (n: n.ip) (lib.attrValues config.cluster.nodes))
         ++ [
           podCidr
           serviceCidr
@@ -352,8 +349,8 @@ in
 
         IP_READY=false
         for i in $(seq 1 30); do
-          if ${pkgs.iproute2}/bin/ip addr show | grep -q "${nodeConfig.ip}"; then
-            echo "IP ${nodeConfig.ip} configured"
+          if ${pkgs.iproute2}/bin/ip addr show | grep -q "${config.cluster.node.ip}"; then
+            echo "IP ${config.cluster.node.ip} configured"
             IP_READY=true
             break
           fi
@@ -362,13 +359,13 @@ in
         done
 
         if [ "$IP_READY" = "false" ]; then
-          echo "ERROR: IP ${nodeConfig.ip} not configured after 30 seconds"
+          echo "ERROR: IP ${config.cluster.node.ip} not configured after 30 seconds"
           exit 1
         fi
 
-        echo "Verifying gateway ${serverConfig.gateway}..."
+        echo "Verifying gateway ${config.cluster.gateway}..."
         for i in $(seq 1 10); do
-          if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${serverConfig.gateway} &>/dev/null; then
+          if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${config.cluster.gateway} &>/dev/null; then
             echo "Gateway reachable"
             break
           fi
@@ -377,9 +374,9 @@ in
         done
 
         ${lib.optionalString (!isBootstrap) ''
-          echo "Verifying bootstrap server ${nodeConfig.bootstrapIP}..."
+          echo "Verifying bootstrap server ${config.cluster.bootstrapNode.ip}..."
           for i in $(seq 1 15); do
-            if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${nodeConfig.bootstrapIP} &>/dev/null; then
+            if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${config.cluster.bootstrapNode.ip} &>/dev/null; then
               echo "Bootstrap server reachable"
               break
             fi
@@ -419,7 +416,7 @@ in
 
   age.secrets = lib.mkIf wantsBootstrapCerts {
     kubernetes-ca = {
-      file = "${secretsPath}/kubernetes-ca.age";
+      file = "${config.cluster.secretsPath}/kubernetes-ca.age";
       path = "/var/lib/kubernetes/secrets/ca.pem";
       owner = "root";
       group = "root";
@@ -427,7 +424,7 @@ in
       symlink = false;
     };
     kubernetes-apitoken = {
-      file = "${secretsPath}/kubernetes-apitoken.age";
+      file = "${config.cluster.secretsPath}/kubernetes-apitoken.age";
       path = "/var/lib/kubernetes/secrets/apitoken.secret";
       owner = "root";
       group = "root";
@@ -435,4 +432,4 @@ in
       symlink = false;
     };
   };
-}
+})

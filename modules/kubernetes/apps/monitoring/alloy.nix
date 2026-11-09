@@ -3,17 +3,16 @@
   k8s,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
 let
   ns = "monitoring";
 
-  monCfg = serverConfig.monitoring or { };
+  monCfg = config.cluster.monitoring;
   cfg = monCfg.alloy or { };
 
-  lokiEnable = (monCfg.loki or { }).enable or true;
+  lokiEnable = monCfg.loki.enable;
   lokiUrl =
     cfg.lokiUrl or (if lokiEnable then "http://loki." + ns + ":3100/loki/api/v1/push" else "");
   enable = (cfg.enable or lokiEnable) && lokiUrl != "";
@@ -109,9 +108,8 @@ let
       };
     };
   };
-in
-if enable then
-  k8s.createHelmRelease {
+
+  release = k8s.createHelmRelease {
     name = "alloy-logs";
     namespace = ns;
     tier = "core";
@@ -123,11 +121,16 @@ if enable then
     version = chartVersion;
     inherit values preScript;
     pssLevel = "privileged";
-  }
-else
-  uninstallService {
+  };
+
+  uninstall = uninstallService {
     name = "alloy-logs";
     extraCleanup = ''
       $KUBECTL -n ${ns} delete configmap ${configMapName} --ignore-not-found
     '';
-  }
+  };
+in
+{
+  systemd.services.alloy-logs-setup =
+    (if enable then release else uninstall).systemd.services.alloy-logs-setup;
+}

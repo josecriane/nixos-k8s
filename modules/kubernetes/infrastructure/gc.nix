@@ -2,22 +2,20 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  nodeConfig,
   ...
 }:
 
 let
-  isBootstrap = nodeConfig.bootstrap or false;
+  isBootstrap = config.cluster.isBootstrap;
 
   cfg = config.cluster.gc;
-  enabled = cfg.enable or false;
-  onCalendar = cfg.onCalendar or "*-*-* 05:00:00";
-  replicaSetAgeHours = cfg.replicaSetAgeHours or 24;
-  podAgeHours = cfg.podAgeHours or 24;
-  jobAgeHours = cfg.jobAgeHours or 168;
-  dryRun = cfg.dryRun or false;
-  excludeNamespaces = cfg.excludeNamespaces or [ ];
+  enabled = cfg.enable;
+  onCalendar = cfg.onCalendar;
+  replicaSetAgeHours = cfg.replicaSetAgeHours;
+  podAgeHours = cfg.podAgeHours;
+  jobAgeHours = cfg.jobAgeHours;
+  dryRun = cfg.dryRun;
+  excludeNamespaces = cfg.excludeNamespaces;
 
   kubectl = "${pkgs.kubectl}/bin/kubectl";
   jq = "${pkgs.jq}/bin/jq";
@@ -149,7 +147,7 @@ let
     echo "GC finished"
   '';
 in
-{
+lib.mkIf (config.cluster.isBootstrap && config.cluster.gc.enable) ({
   systemd.services.k8s-gc = {
     description = "Garbage-collect superseded Kubernetes objects";
     after = [ "k3s.service" ];
@@ -170,4 +168,4 @@ in
       RandomizedDelaySec = "30m";
     };
   };
-}
+})

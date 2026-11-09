@@ -25,15 +25,13 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
 let
-  mirrorCfg = serverConfig.dockerMirror or { };
-  clusterIP = mirrorCfg.clusterIP or null;
-  storageSize = mirrorCfg.storageSize or null;
+  mirrorCfg = config.cluster.dockerMirror;
+  clusterIP = mirrorCfg.clusterIP;
+  storageSize = mirrorCfg.storageSize;
 
   # The twuni chart always generates its own Secret named
   # "<release>-<chart>-secret" (here: docker-mirror-docker-registry-secret)
@@ -134,17 +132,19 @@ let
     extraScript = injectProxyCreds;
   };
 in
-lib.recursiveUpdate
-  {
-    age.secrets.docker-mirror-proxy = {
-      file = "${secretsPath}/docker-mirror-proxy.age";
-    };
-    age.secrets.registry-htpasswd = {
-      file = "${secretsPath}/registry-htpasswd.age";
-    };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-mirror) (
+  lib.recursiveUpdate
+    {
+      age.secrets.docker-mirror-proxy = {
+        file = "${config.cluster.secretsPath}/docker-mirror-proxy.age";
+      };
+      age.secrets.registry-htpasswd = {
+        file = "${config.cluster.secretsPath}/registry-htpasswd.age";
+      };
 
-    systemd.services = release.systemd.services;
-  }
-  {
-    systemd.services.docker-mirror-setup.serviceConfig.ExecStartPre = "${preHelm}";
-  }
+      systemd.services = release.systemd.services;
+    }
+    {
+      systemd.services.docker-mirror-setup.serviceConfig.ExecStartPre = "${preHelm}";
+    }
+)

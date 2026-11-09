@@ -2,30 +2,27 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  nodeConfig,
-  clusterNodes,
-  secretsPath,
   ...
 }:
 
 let
-  isServer = nodeConfig.role == "server";
-  isAgent = nodeConfig.role == "agent";
-  isBootstrap = nodeConfig.bootstrap or false;
-  isHA = builtins.length (builtins.filter (n: n.role == "server") clusterNodes) > 1;
+  isServer = config.cluster.node.role == "server";
+  isAgent = config.cluster.node.role == "agent";
+  isBootstrap = config.cluster.isBootstrap;
+  isHA =
+    builtins.length (builtins.filter (n: n.role == "server") (lib.attrValues config.cluster.nodes)) > 1;
   k8sCfg = config.cluster.kubernetes;
-  cni = k8sCfg.cni or "flannel";
-  podCidr = k8sCfg.podCidr or "10.42.0.0/16";
-  serviceCidr = k8sCfg.serviceCidr or "10.43.0.0/16";
+  cni = k8sCfg.cni;
+  podCidr = k8sCfg.podCidr;
+  serviceCidr = k8sCfg.serviceCidr;
   useCalico = cni == "calico";
   useServiceLB = k8sCfg.loadBalancer == "servicelb";
   kubeconfigPath = "/etc/rancher/k3s/k3s.yaml";
 in
-{
+lib.mkIf (config.cluster.kubernetes.engine == "k3s") ({
   # K3s token (shared across all nodes via agenix)
   age.secrets.k3s-token = {
-    file = "${secretsPath}/k3s-token.age";
+    file = "${config.cluster.secretsPath}/k3s-token.age";
     path = "/var/lib/rancher/k3s/server/token";
     owner = "root";
     mode = "0600";
@@ -37,7 +34,7 @@ in
     role = if isServer then "server" else "agent";
     tokenFile = config.age.secrets.k3s-token.path;
 
-    serverAddr = lib.mkIf (!isBootstrap) "https://${nodeConfig.bootstrapIP}:6443";
+    serverAddr = lib.mkIf (!isBootstrap) "https://${config.cluster.bootstrapNode.ip}:6443";
 
     extraFlags = toString (
       # Server-specific flags
@@ -51,8 +48,8 @@ in
           "--write-kubeconfig-mode=600"
           "--cluster-cidr=${podCidr}"
           "--service-cidr=${serviceCidr}"
-          "--node-ip=${nodeConfig.ip}"
-          "--advertise-address=${nodeConfig.ip}"
+          "--node-ip=${config.cluster.node.ip}"
+          "--advertise-address=${config.cluster.node.ip}"
         ]
       )
       # Disable built-in flannel when using calico
@@ -66,7 +63,7 @@ in
       ]
       # Agent-specific flags
       ++ lib.optionals isAgent [
-        "--node-ip=${nodeConfig.ip}"
+        "--node-ip=${config.cluster.node.ip}"
       ]
       # Common kubelet flags
       ++ [
@@ -106,7 +103,7 @@ in
   networking.firewall.extraCommands =
     let
       sources = lib.concatStringsSep "," (
-        (map (n: n.ip) clusterNodes)
+        (map (n: n.ip) (lib.attrValues config.cluster.nodes))
         ++ [
           podCidr
           serviceCidr
@@ -176,8 +173,8 @@ in
         # Wait for IP address to be configured
         IP_READY=false
         for i in $(seq 1 30); do
-          if ${pkgs.iproute2}/bin/ip addr show | grep -q "${nodeConfig.ip}"; then
-            echo "IP ${nodeConfig.ip} configured"
+          if ${pkgs.iproute2}/bin/ip addr show | grep -q "${config.cluster.node.ip}"; then
+            echo "IP ${config.cluster.node.ip} configured"
             IP_READY=true
             break
           fi
@@ -186,15 +183,15 @@ in
         done
 
         if [ "$IP_READY" = "false" ]; then
-          echo "ERROR: IP ${nodeConfig.ip} not configured after 30 seconds"
+          echo "ERROR: IP ${config.cluster.node.ip} not configured after 30 seconds"
           exit 1
         fi
 
         # Verify gateway is reachable
-        echo "Verifying connectivity to gateway ${serverConfig.gateway}..."
+        echo "Verifying connectivity to gateway ${config.cluster.gateway}..."
         for i in $(seq 1 10); do
-          if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${serverConfig.gateway} &>/dev/null; then
-            echo "Gateway ${serverConfig.gateway} reachable"
+          if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${config.cluster.gateway} &>/dev/null; then
+            echo "Gateway ${config.cluster.gateway} reachable"
             break
           fi
           echo "Waiting for gateway... ($i/10)"
@@ -203,7 +200,7 @@ in
 
         # DNS check (optional, non-blocking)
         echo "Verifying DNS..."
-        if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${builtins.head serverConfig.nameservers} &>/dev/null; then
+        if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${builtins.head config.cluster.nameservers} &>/dev/null; then
           echo "DNS working"
         else
           echo "WARN: DNS not responding, but continuing (may be normal)"
@@ -211,10 +208,10 @@ in
 
         ${lib.optionalString (!isBootstrap) ''
           # Non-bootstrap nodes: verify bootstrap server is reachable
-          echo "Verifying connectivity to bootstrap server ${nodeConfig.bootstrapIP}..."
+          echo "Verifying connectivity to bootstrap server ${config.cluster.bootstrapNode.ip}..."
           for i in $(seq 1 15); do
-            if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${nodeConfig.bootstrapIP} &>/dev/null; then
-              echo "Bootstrap server ${nodeConfig.bootstrapIP} reachable"
+            if ${pkgs.iputils}/bin/ping -c 1 -W 2 ${config.cluster.bootstrapNode.ip} &>/dev/null; then
+              echo "Bootstrap server ${config.cluster.bootstrapNode.ip} reachable"
               break
             fi
             echo "Waiting for bootstrap server... ($i/15)"
@@ -286,4 +283,4 @@ in
     };
   };
 
-}
+})

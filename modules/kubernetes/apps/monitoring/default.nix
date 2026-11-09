@@ -54,7 +54,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }@args:
 
@@ -68,29 +67,29 @@ let
   nodeExporterRelabelModule = import ./node-exporter-relabel.nix args;
   alloyModule = import ./alloy.nix args;
 
-  monCfg = serverConfig.monitoring or { };
-  grafanaMw = monCfg.grafana.middlewares or [ ];
-  promMw = monCfg.prometheus.middlewares or [ ];
-  alertMw = monCfg.alertmanager.middlewares or [ ];
+  monCfg = config.cluster.monitoring;
+  grafanaMw = monCfg.grafana.middlewares;
+  promMw = monCfg.prometheus.middlewares;
+  alertMw = monCfg.alertmanager.middlewares;
 
   # Optional StorageClass override for every monitoring PVC. Unset = use the
   # cluster default SC (k3s local-path, Longhorn if set as default, etc.).
-  storageClass = monCfg.storageClass or null;
+  storageClass = monCfg.storageClass;
 
   # Component toggles. Default true preserves the historical behavior of
   # always installing Loki + Promtail alongside kube-prometheus-stack.
-  lokiEnable = monCfg.loki.enable or true;
+  lokiEnable = monCfg.loki.enable;
 
   # Grafana Cloud Prometheus remote_write (off by default).
-  gcCfg = monCfg.grafanaCloud or { };
-  gcEnable = gcCfg.enable or false;
+  gcCfg = monCfg.grafanaCloud;
+  gcEnable = gcCfg.enable;
   gcPromCfg = gcCfg.prometheus or { };
   gcPromUrl = gcPromCfg.remoteWriteUrl or "";
   gcPromSecret = gcPromCfg.existingSecret or "grafana-cloud-prometheus";
   gcPromAllowlist = gcPromCfg.metricsAllowlist or [ ];
   gcPromRetention = gcPromCfg.retention or null;
 
-  engine = (serverConfig.kubernetes or { }).engine or "k3s";
+  engine = config.cluster.kubernetes.engine;
 
   kpsK3sValues = lib.optionalAttrs (engine == "k3s") {
     kubeControllerManager.enabled = false;
@@ -103,23 +102,19 @@ let
     };
   };
 
-  disabledRules = monCfg.disabledRules or [ ];
+  disabledRules = monCfg.disabledRules;
 
   kpsDisabledValues = lib.optionalAttrs (disabledRules != [ ]) {
     defaultRules.disabled = lib.genAttrs disabledRules (_: true);
   };
 
-  amWhCfg = (monCfg.alertmanager or { }).webhook or { };
-  amWhEnable = amWhCfg.enable or false;
-  amWhUrl = amWhCfg.url or "";
-  amWhSecret = amWhCfg.existingSecret or null;
-  amWhTokenKey = amWhCfg.tokenKey or "api_token";
-  amWhRepeat = amWhCfg.repeatInterval or "12h";
-  amWhGroupBy =
-    amWhCfg.groupBy or [
-      "namespace"
-      "alertname"
-    ];
+  amWhCfg = monCfg.alertmanager.webhook;
+  amWhEnable = amWhCfg.enable;
+  amWhUrl = amWhCfg.url;
+  amWhSecret = amWhCfg.existingSecret;
+  amWhTokenKey = amWhCfg.tokenKey;
+  amWhRepeat = amWhCfg.repeatInterval;
+  amWhGroupBy = amWhCfg.groupBy;
 
   amWhReceiver = {
     name = "webhook";
@@ -331,41 +326,46 @@ let
     name = "promtail";
   };
 
-  lokiBlock = if lokiEnable then loki else lokiUninstall;
+  lokiBlock = {
+    systemd.services.loki-setup =
+      (if lokiEnable then loki else lokiUninstall).systemd.services.loki-setup;
+  };
   promtailBlock = promtailUninstall;
 in
-lib.recursiveUpdate
-  (builtins.foldl' lib.recursiveUpdate kps [
-    lokiBlock
-    dashboardsModule
-    smartExporterModule
-    nasSmartExporterModule
-    nasNodeExporterModule
-    nodeExporterRelabelModule
-    alloyModule
-  ])
-  (
-    lib.recursiveUpdate promtailBlock {
-      systemd.services.kube-prometheus-stack-setup = {
-        serviceConfig.ExecStartPre = "${preHelmKps}";
-      };
-      systemd.services.loki-setup = {
-        after = (lokiBlock.systemd.services.loki-setup.after or [ ]) ++ [
-          "kube-prometheus-stack-setup.service"
-        ];
-        wants = [ "kube-prometheus-stack-setup.service" ];
-      };
-      systemd.services.alloy-logs-setup = {
-        after = (alloyModule.systemd.services.alloy-logs-setup.after or [ ]) ++ [
-          "loki-setup.service"
-        ];
-        wants = [ "loki-setup.service" ];
-      };
-      systemd.services.promtail-setup = {
-        after = (promtailBlock.systemd.services.promtail-setup.after or [ ]) ++ [
-          "loki-setup.service"
-        ];
-        wants = [ "loki-setup.service" ];
-      };
-    }
-  )
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.monitoring) (
+  lib.recursiveUpdate
+    (builtins.foldl' lib.recursiveUpdate kps [
+      lokiBlock
+      dashboardsModule
+      smartExporterModule
+      nasSmartExporterModule
+      nasNodeExporterModule
+      nodeExporterRelabelModule
+      alloyModule
+    ])
+    (
+      lib.recursiveUpdate promtailBlock {
+        systemd.services.kube-prometheus-stack-setup = {
+          serviceConfig.ExecStartPre = "${preHelmKps}";
+        };
+        systemd.services.loki-setup = {
+          after = (lokiBlock.systemd.services.loki-setup.after or [ ]) ++ [
+            "kube-prometheus-stack-setup.service"
+          ];
+          wants = [ "kube-prometheus-stack-setup.service" ];
+        };
+        systemd.services.alloy-logs-setup = {
+          after = (alloyModule.systemd.services.alloy-logs-setup.after or [ ]) ++ [
+            "loki-setup.service"
+          ];
+          wants = [ "loki-setup.service" ];
+        };
+        systemd.services.promtail-setup = {
+          after = (promtailBlock.systemd.services.promtail-setup.after or [ ]) ++ [
+            "loki-setup.service"
+          ];
+          wants = [ "loki-setup.service" ];
+        };
+      }
+    )
+)

@@ -41,24 +41,22 @@
   config,
   lib,
   pkgs,
-  serverConfig,
-  secretsPath,
   ...
 }:
 
 let
-  ghConfig = serverConfig.github-runners or { };
-  githubConfigUrl = ghConfig.configUrl or "";
-  maxRunners = ghConfig.maxRunners or 5;
-  runnerName = ghConfig.runnerName or "self-hosted-linux";
-  nodeSlots = ghConfig.nodeSlots or { };
-  aptMirror = lib.removeSuffix "/" (ghConfig.aptMirror or "");
+  ghConfig = config.cluster.github-runners;
+  githubConfigUrl = ghConfig.configUrl;
+  maxRunners = ghConfig.maxRunners;
+  runnerName = ghConfig.runnerName;
+  nodeSlots = ghConfig.nodeSlots;
+  aptMirror = lib.removeSuffix "/" ghConfig.aptMirror;
   slotsEnabled = nodeSlots != { };
-  slotResource = "${serverConfig.domain}/runner-slot";
+  slotResource = "${config.cluster.domain}/runner-slot";
   slotResourcePointer = builtins.replaceStrings [ "~" "/" ] [ "~0" "~1" ] slotResource;
 
   # GitHub App auth is preferred. Fall back to PAT only if githubApp not configured.
-  githubApp = ghConfig.githubApp or null;
+  githubApp = ghConfig.githubApp;
   useGithubApp = githubApp != null;
 
   resourcesCfg = ghConfig.resources or { };
@@ -115,11 +113,11 @@ let
     )
   );
 
-  mirrorEnabled = config.cluster.services.docker-mirror or false;
+  mirrorEnabled = config.cluster.services.docker-mirror;
   # Internal cluster DNS for the mirror (no external ingress)
   mirrorInternalHost = "docker-mirror-docker-registry.container-mirror.svc.cluster.local:5000";
-  registryHost = "registry.${serverConfig.subdomain}.${serverConfig.domain}";
-  traefikIP = serverConfig.traefikIP;
+  registryHost = "registry.${config.cluster.subdomain}.${config.cluster.domain}";
+  traefikIP = config.cluster.traefikIP;
 
   hostAliasesJson = builtins.toJSON (
     lib.optionals mirrorEnabled [
@@ -233,19 +231,19 @@ let
     '';
   };
 in
-{
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.github-runners) ({
   age.secrets = lib.mkMerge [
     (lib.mkIf useGithubApp {
       github-app-key = {
-        file = "${secretsPath}/github-app-key.age";
+        file = "${config.cluster.secretsPath}/github-app-key.age";
       };
     })
     (lib.mkIf (!useGithubApp) {
       github-pat = {
-        file = "${secretsPath}/github-pat.age";
+        file = "${config.cluster.secretsPath}/github-pat.age";
       };
     })
   ];
 
   systemd.services = controller.systemd.services // runnerSet.systemd.services;
-}
+})

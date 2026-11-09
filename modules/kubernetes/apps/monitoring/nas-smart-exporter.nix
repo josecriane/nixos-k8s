@@ -1,13 +1,12 @@
 # Scrape smartctl_exporter running on each enabled NAS host (port 9633).
 # Cluster nodes are scraped by smart-exporter.nix; this module registers a
 # separate Service/Endpoints/ServiceMonitor for NAS hosts (outside the cluster).
-# No-op if no entry in serverConfig.nas has enabled=true.
+# No-op if no entry in config.cluster.nas has enabled=true.
 {
   k8s,
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
@@ -15,15 +14,13 @@ let
   ns = "monitoring";
   port = 9633;
 
-  enabledNas = lib.filter (n: n.enabled or false) (
-    lib.mapAttrsToList (name: cfg: cfg // { inherit name; }) (serverConfig.nas or { })
-  );
+  enabledNas = lib.filter (n: n.enabled) (lib.attrValues config.cluster.nas);
 
   enabled = enabledNas != [ ];
 
   nasAddresses = lib.concatMapStringsSep "\n" (n: ''
     - ip: ${n.ip}
-      hostname: ${n.hostname or n.name}'') enabledNas;
+      hostname: ${n.hostname}'') enabledNas;
 
   manifestText = ''
     apiVersion: v1
@@ -84,8 +81,8 @@ let
 
   configHash = builtins.hashString "sha256" manifestText;
 in
-lib.optionalAttrs enabled {
-  systemd.services.nas-smartctl-exporter-scrape-setup = {
+{
+  systemd.services.nas-smartctl-exporter-scrape-setup = lib.mkIf enabled {
     description = "Register NAS smartctl_exporter targets with Prometheus";
     after = [ "kube-prometheus-stack-setup.service" ];
     requires = [ "kube-prometheus-stack-setup.service" ];

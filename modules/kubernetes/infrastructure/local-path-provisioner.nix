@@ -6,7 +6,6 @@
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
@@ -20,7 +19,7 @@ let
     sha256 = "fe682186b00400fe7e2b72bae16f63e47a56a6dcc677938c6642139ef670045e";
   };
 in
-{
+lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.engine == "kubeadm") ({
   systemd.services.local-path-provisioner-setup = {
     description = "Setup Local Path Provisioner";
     after = [
@@ -68,4 +67,4 @@ in
       '';
     };
   };
-}
+})

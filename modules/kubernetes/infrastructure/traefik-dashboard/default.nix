@@ -1,12 +1,11 @@
 # Expose the Traefik dashboard via an IngressRoute at traefik.<subdomain>.<domain>.
-# Opt-in via serverConfig.traefik.dashboard.enable.
+# Opt-in via config.cluster.traefik.dashboard.enable.
 # Middlewares are applied in declaration order; typical use is HSTS + forward-auth.
 {
   k8s,
   config,
   lib,
   pkgs,
-  serverConfig,
   ...
 }:
 
@@ -15,9 +14,9 @@ let
 
   dashCfg = config.cluster.traefik.dashboard;
   dashEnable = config.cluster.services.traefikDashboard;
-  host = dashCfg.host or (k8s.hostname "traefik");
-  middlewares = dashCfg.middlewares or [ ];
-  extraAfter = dashCfg.extraAfter or [ ];
+  host = if dashCfg.host != null then dashCfg.host else k8s.hostname "traefik";
+  middlewares = dashCfg.middlewares;
+  extraAfter = dashCfg.extraAfter;
 
   middlewaresValue = lib.optionalString (middlewares != [ ]) (
     "      middlewares:\n"
@@ -26,39 +25,41 @@ let
     ) middlewares
   );
 in
-lib.mkIf dashEnable {
-  systemd.services.traefik-dashboard-setup = {
-    description = "Expose Traefik dashboard via IngressRoute";
-    after = [ "traefik-setup.service" ] ++ extraAfter;
-    wants = [ "traefik-setup.service" ] ++ extraAfter;
-    wantedBy = [ "k3s-infrastructure.target" ];
-    before = [ "k3s-infrastructure.target" ];
+lib.mkIf (config.cluster.isBootstrap) (
+  lib.mkIf dashEnable {
+    systemd.services.traefik-dashboard-setup = {
+      description = "Expose Traefik dashboard via IngressRoute";
+      after = [ "traefik-setup.service" ] ++ extraAfter;
+      wants = [ "traefik-setup.service" ] ++ extraAfter;
+      wantedBy = [ "k3s-infrastructure.target" ];
+      before = [ "k3s-infrastructure.target" ];
 
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = pkgs.writeShellScript "traefik-dashboard-setup" ''
-        ${k8s.libShSource}
-        setup_preamble "${markerFile}" "Traefik dashboard"
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "traefik-dashboard-setup" ''
+          ${k8s.libShSource}
+          setup_preamble "${markerFile}" "Traefik dashboard"
 
-        wait_for_k3s
-        wait_for_traefik
-        wait_for_certificate
+          wait_for_k3s
+          wait_for_traefik
+          wait_for_certificate
 
-        ${k8s.applyManifestsScript {
-          name = "traefik-dashboard";
-          manifests = [ ./manifests.yaml ];
-          substitutions = {
-            HOST = host;
-            MIDDLEWARES = middlewaresValue;
-          };
-        }}
+          ${k8s.applyManifestsScript {
+            name = "traefik-dashboard";
+            manifests = [ ./manifests.yaml ];
+            substitutions = {
+              HOST = host;
+              MIDDLEWARES = middlewaresValue;
+            };
+          }}
 
-        print_success "Traefik dashboard" \
-          "URL: https://${host}/dashboard/"
+          print_success "Traefik dashboard" \
+            "URL: https://${host}/dashboard/"
 
-        create_marker "${markerFile}"
-      '';
+          create_marker "${markerFile}"
+        '';
+      };
     };
-  };
-}
+  }
+)
