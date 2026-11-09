@@ -1,6 +1,6 @@
 service:
-  type: LoadBalancer
   spec:
+    type: LoadBalancer
     loadBalancerIP: __TRAEFIK_IP__
 ports:
   web:
