@@ -44,8 +44,8 @@ lib.mkIf (config.cluster.isBootstrap) (
       description = "Upload TLS certificate to Kubernetes";
       after = [ "traefik-setup.service" ];
       wants = [ "traefik-setup.service" ];
-      wantedBy = [ "k3s-infrastructure.target" ];
-      before = [ "k3s-infrastructure.target" ];
+      wantedBy = [ "k8s-infrastructure.target" ];
+      before = [ "k8s-infrastructure.target" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -57,7 +57,7 @@ lib.mkIf (config.cluster.isBootstrap) (
           ${k8s.libShSource}
 
           setup_preamble_hash "${markerFile}" "TLS certificate" "${certContentHash}"
-          wait_for_k3s
+          wait_for_api
 
           echo "Uploading TLS certificate to cluster..."
 

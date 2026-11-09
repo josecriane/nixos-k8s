@@ -88,8 +88,8 @@ in
     description = "Register NAS node_exporter targets with Prometheus";
     after = [ "kube-prometheus-stack-setup.service" ];
     requires = [ "kube-prometheus-stack-setup.service" ];
-    wantedBy = [ "k3s-core.target" ];
-    before = [ "k3s-core.target" ];
+    wantedBy = [ "k8s-core.target" ];
+    before = [ "k8s-core.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -99,7 +99,7 @@ in
         setup_preamble_hash "/var/lib/nas-node-exporter-scrape-setup-done" \
           "NAS node_exporter scrape" "${configHash}"
 
-        wait_for_k3s
+        wait_for_api
         ensure_namespace "${ns}"
 
         $KUBECTL apply -f ${manifest}

@@ -31,8 +31,8 @@ lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.engine == "kub
       "kubelet.service"
     ];
     # TIER 1: Infrastructure (needed before storage tier)
-    wantedBy = [ "k3s-infrastructure.target" ];
-    before = [ "k3s-infrastructure.target" ];
+    wantedBy = [ "k8s-infrastructure.target" ];
+    before = [ "k8s-infrastructure.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -44,7 +44,7 @@ lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.engine == "kub
         ${k8s.libShSource}
 
         setup_preamble "${markerFile}" "Local Path Provisioner"
-        wait_for_k3s
+        wait_for_api
 
         echo "Installing Local Path Provisioner (${lppVersion})..."
 

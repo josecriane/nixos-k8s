@@ -34,8 +34,8 @@ in
     description = "Relabel node-exporter ServiceMonitor to use node name as instance";
     after = [ "kube-prometheus-stack-setup.service" ];
     requires = [ "kube-prometheus-stack-setup.service" ];
-    wantedBy = [ "k3s-core.target" ];
-    before = [ "k3s-core.target" ];
+    wantedBy = [ "k8s-core.target" ];
+    before = [ "k8s-core.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -45,7 +45,7 @@ in
         setup_preamble_hash "/var/lib/node-exporter-relabel-setup-done" \
           "node-exporter relabel" "${configHash}"
 
-        wait_for_k3s
+        wait_for_api
         wait_for_resource servicemonitor "${ns}" kube-prometheus-stack-prometheus-node-exporter 300
 
         $KUBECTL patch servicemonitor kube-prometheus-stack-prometheus-node-exporter \

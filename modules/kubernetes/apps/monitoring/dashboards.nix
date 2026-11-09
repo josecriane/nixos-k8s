@@ -56,8 +56,8 @@ in
     description = "Apply nixos-k8s Grafana dashboard ConfigMaps";
     after = [ "kube-prometheus-stack-setup.service" ];
     requires = [ "kube-prometheus-stack-setup.service" ];
-    wantedBy = [ "k3s-core.target" ];
-    before = [ "k3s-core.target" ];
+    wantedBy = [ "k8s-core.target" ];
+    before = [ "k8s-core.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -67,7 +67,7 @@ in
         setup_preamble_hash "/var/lib/grafana-upstream-dashboards-setup-done" \
           "nixos-k8s Grafana dashboards" "${configHash}"
 
-        wait_for_k3s
+        wait_for_api
         ensure_namespace "${ns}"
 
         ${applyLines}

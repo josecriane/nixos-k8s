@@ -66,8 +66,8 @@ setup_preamble_hash() {
 # WAIT FUNCTIONS
 # ============================================
 
-wait_for_k3s() {
-  echo "Waiting for K3s..."
+wait_for_api() {
+  echo "Waiting for the API server..."
   local attempt=0
   local max_attempts=20
   local base_delay=3
@@ -80,7 +80,7 @@ wait_for_k3s() {
     if $KUBECTL get --raw=/readyz &>/dev/null; then
       stable=$((stable + 1))
       if [ $stable -ge $stable_required ]; then
-        echo "K3s is ready"
+        echo "API server is ready"
         break
       fi
       sleep $stable_interval
@@ -98,19 +98,19 @@ wait_for_k3s() {
     local jitter=$((RANDOM % (delay / 3 + 1)))
     local total_delay=$((delay + jitter))
 
-    echo "Waiting for K3s... (attempt $((attempt + 1))/$max_attempts, delay: ${total_delay}s)"
+    echo "Waiting for the API server... (attempt $((attempt + 1))/$max_attempts, delay: ${total_delay}s)"
     sleep $total_delay
     attempt=$((attempt + 1))
   done
 
   if [ $stable -lt $stable_required ]; then
-    echo "ERROR: K3s not available after $max_attempts attempts"
+    echo "ERROR: API server not available after $max_attempts attempts"
     exit 1
   fi
 
   # Skip the Ready wait for CNI bootstrap: the CNI installer (e.g. Calico
   # via tigera-operator) runs inside a *-setup.service that itself calls
-  # wait_for_k3s. The node cannot become Ready without a CNI, so waiting
+  # wait_for_api. The node cannot become Ready without a CNI, so waiting
   # here would deadlock the first boot. Callers that need a Ready node
   # should use wait_for_deployment/wait_for_pod for their own workload.
   if [ "${SKIP_NODE_READY:-}" = "1" ]; then

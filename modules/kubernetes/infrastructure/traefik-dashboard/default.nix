@@ -31,8 +31,8 @@ lib.mkIf (config.cluster.isBootstrap) (
       description = "Expose Traefik dashboard via IngressRoute";
       after = [ "traefik-setup.service" ] ++ extraAfter;
       wants = [ "traefik-setup.service" ] ++ extraAfter;
-      wantedBy = [ "k3s-infrastructure.target" ];
-      before = [ "k3s-infrastructure.target" ];
+      wantedBy = [ "k8s-infrastructure.target" ];
+      before = [ "k8s-infrastructure.target" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -41,7 +41,7 @@ lib.mkIf (config.cluster.isBootstrap) (
           ${k8s.libShSource}
           setup_preamble "${markerFile}" "Traefik dashboard"
 
-          wait_for_k3s
+          wait_for_api
           wait_for_traefik
           wait_for_certificate
 

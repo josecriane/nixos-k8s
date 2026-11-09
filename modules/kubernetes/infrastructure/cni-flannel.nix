@@ -36,8 +36,8 @@ lib.mkIf
         "kube-apiserver.service"
         "k3s.service"
       ];
-      wantedBy = [ "k3s-infrastructure.target" ];
-      before = [ "k3s-infrastructure.target" ];
+      wantedBy = [ "k8s-infrastructure.target" ];
+      before = [ "k8s-infrastructure.target" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -49,7 +49,7 @@ lib.mkIf
           ${k8s.libShSource}
 
           setup_preamble "${markerFile}" "Flannel CNI"
-          wait_for_k3s
+          wait_for_api
 
           echo "Installing Flannel CNI (${flannelVersion})..."
 

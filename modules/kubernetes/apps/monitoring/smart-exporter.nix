@@ -1,5 +1,5 @@
 # Scrape smartctl_exporter running on each cluster node (port 9633).
-# The exporter must be enabled per-node via `smart.exporter.enable = true`.
+# The exporter must be enabled per-node via `k8s.smart.exporter.enable = true`.
 # Downstream layers can register additional scrape targets (e.g. NAS hosts
 # outside the cluster) with a separate Service/Endpoints/ServiceMonitor.
 {
@@ -55,8 +55,8 @@ in
     description = "Register cluster smartctl_exporter targets with Prometheus";
     after = [ "kube-prometheus-stack-setup.service" ];
     requires = [ "kube-prometheus-stack-setup.service" ];
-    wantedBy = [ "k3s-core.target" ];
-    before = [ "k3s-core.target" ];
+    wantedBy = [ "k8s-core.target" ];
+    before = [ "k8s-core.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -66,7 +66,7 @@ in
         setup_preamble_hash "/var/lib/smartctl-exporter-scrape-setup-done" \
           "smartctl_exporter scrape" "${configHash}"
 
-        wait_for_k3s
+        wait_for_api
         ensure_namespace "${ns}"
 
         $KUBECTL -n ${ns} delete servicemonitor,service,endpoints smartctl-exporter --ignore-not-found

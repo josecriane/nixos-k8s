@@ -36,7 +36,7 @@ let
   prepare = ''
     ${k8s.libShSource}
     set -euo pipefail
-    wait_for_k3s
+    wait_for_api
     ensure_namespace container-registry
 
     echo "Creating registry htpasswd secret..."

@@ -11,8 +11,8 @@ let
 in
 {
   # All nodes get the infrastructure target
-  systemd.targets.k3s-infrastructure = {
-    description = "K3s infrastructure services";
+  systemd.targets.k8s-infrastructure = {
+    description = "Kubernetes infrastructure services";
     wantedBy = [ "multi-user.target" ];
     after = [
       "network-online.target"
@@ -25,31 +25,31 @@ in
   };
 
   # Higher-level targets only on the bootstrap server
-  systemd.targets.k3s-storage = lib.mkIf isBootstrap {
-    description = "K3s storage services";
+  systemd.targets.k8s-storage = lib.mkIf isBootstrap {
+    description = "Kubernetes storage services";
     wantedBy = [ "multi-user.target" ];
-    after = [ "k3s-infrastructure.target" ];
-    requires = [ "k3s-infrastructure.target" ];
+    after = [ "k8s-infrastructure.target" ];
+    requires = [ "k8s-infrastructure.target" ];
   };
 
-  systemd.targets.k3s-core = lib.mkIf isBootstrap {
-    description = "K3s core services";
+  systemd.targets.k8s-core = lib.mkIf isBootstrap {
+    description = "Kubernetes core services";
     wantedBy = [ "multi-user.target" ];
-    after = [ "k3s-storage.target" ];
-    requires = [ "k3s-storage.target" ];
+    after = [ "k8s-storage.target" ];
+    requires = [ "k8s-storage.target" ];
   };
 
-  systemd.targets.k3s-apps = lib.mkIf isBootstrap {
-    description = "K3s application services";
+  systemd.targets.k8s-apps = lib.mkIf isBootstrap {
+    description = "Kubernetes application services";
     wantedBy = [ "multi-user.target" ];
-    after = [ "k3s-core.target" ];
-    requires = [ "k3s-core.target" ];
+    after = [ "k8s-core.target" ];
+    requires = [ "k8s-core.target" ];
   };
 
-  systemd.targets.k3s-extras = lib.mkIf isBootstrap {
-    description = "K3s extra services (optional)";
+  systemd.targets.k8s-extras = lib.mkIf isBootstrap {
+    description = "Kubernetes extra services (optional)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "k3s-apps.target" ];
-    wants = [ "k3s-apps.target" ];
+    after = [ "k8s-apps.target" ];
+    wants = [ "k8s-apps.target" ];
   };
 }

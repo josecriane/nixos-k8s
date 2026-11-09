@@ -50,10 +50,10 @@ in
 
   config.systemd.services.k8s-cleanup = lib.mkIf config.cluster.isBootstrap {
     description = "Cleanup disabled K8s services";
-    after = [ "k3s-infrastructure.target" ];
-    requires = [ "k3s-infrastructure.target" ];
-    wantedBy = [ "k3s-storage.target" ];
-    before = [ "k3s-storage.target" ];
+    after = [ "k8s-infrastructure.target" ];
+    requires = [ "k8s-infrastructure.target" ];
+    wantedBy = [ "k8s-storage.target" ];
+    before = [ "k8s-storage.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -76,7 +76,7 @@ in
         ''
         + lib.optionalString (extraCleanups != "") ''
 
-          wait_for_k3s
+          wait_for_api
           ${extraCleanups}
         ''
       );

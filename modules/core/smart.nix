@@ -6,7 +6,7 @@
 }:
 
 let
-  cfg = config.smart;
+  cfg = config.k8s.smart;
 
   monitoringEnabled = config.cluster.services.monitoring;
 
@@ -23,7 +23,7 @@ let
   hasCluster = (lib.attrValues config.cluster.nodes) != [ ];
 in
 {
-  options.smart = {
+  options.k8s.smart = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = true;

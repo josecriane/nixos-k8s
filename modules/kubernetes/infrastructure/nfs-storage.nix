@@ -72,14 +72,14 @@ in
   config.systemd.services.nfs-storage-setup = lib.mkIf config.cluster.isBootstrap {
     description = "Setup storage for K8s services";
     after = [
-      "k3s-infrastructure.target"
+      "k8s-infrastructure.target"
     ]
     ++ lib.optionals useNFS ([ nasMountUnit ] ++ cfg.extraMountUnits);
-    requires = [ "k3s-infrastructure.target" ];
+    requires = [ "k8s-infrastructure.target" ];
     wants = lib.optionals useNFS ([ nasMountUnit ] ++ cfg.extraMountUnits);
     # TIER 2: Storage
-    wantedBy = [ "k3s-storage.target" ];
-    before = [ "k3s-storage.target" ];
+    wantedBy = [ "k8s-storage.target" ];
+    before = [ "k8s-storage.target" ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -91,7 +91,7 @@ in
         ${k8s.libShSource}
 
         setup_preamble "${markerFile}" "NFS Storage"
-        wait_for_k3s
+        wait_for_api
 
         USE_NFS="${if useNFS then "true" else "false"}"
         HOST_DATA_PATH="${hostDataPath}"

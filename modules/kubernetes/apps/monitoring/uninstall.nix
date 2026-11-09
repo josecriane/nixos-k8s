@@ -14,7 +14,7 @@
 let
   engineService =
     if config.cluster.kubernetes.engine == "k3s" then "k3s.service" else "kube-apiserver.service";
-  targetName = "k3s-${tier}";
+  targetName = "k8s-${tier}";
   prevTier =
     {
       infrastructure = null;
@@ -24,7 +24,7 @@ let
       extras = "apps";
     }
     .${tier} or null;
-  prevTarget = if prevTier != null then "k3s-${prevTier}.target" else null;
+  prevTarget = if prevTier != null then "k8s-${prevTier}.target" else null;
 
   script = pkgs.writeShellScript "${name}-uninstall" ''
     set -e

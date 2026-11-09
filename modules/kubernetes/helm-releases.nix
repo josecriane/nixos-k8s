@@ -191,7 +191,7 @@ let
     let
       markerFile = "/var/lib/${name}-setup-done";
       serviceName = "${name}-setup";
-      targetName = "k3s-${tier}";
+      targetName = "k8s-${tier}";
       prevTier =
         {
           infrastructure = null;
@@ -201,7 +201,7 @@ let
           extras = "apps";
         }
         .${tier} or null;
-      prevTargetName = if prevTier != null then "k3s-${prevTier}" else null;
+      prevTargetName = if prevTier != null then "k8s-${prevTier}" else null;
 
       valuesJson = builtins.toJSON values;
       valuesFileNix = pkgs.writeText "${name}-values.json" valuesJson;
@@ -321,7 +321,7 @@ let
         ExecStart = pkgs.writeShellScript serviceName ''
           ${k8s.libShSource}
 
-          wait_for_k3s
+          wait_for_api
 
           # Always ensure namespace exists with the correct PSS level, even
           # when the helm install is skipped by the marker hash check. Pods

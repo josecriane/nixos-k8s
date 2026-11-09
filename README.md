@@ -128,7 +128,9 @@ make fmt                           Format .nix files
 make clean                         Remove build artifacts
 ```
 
-Releases declared in `k8s.helmReleases` detect config changes automatically. When you change a chart version, values, or an ingress in a `.nix` file, `make deploy` will re-run only the affected services. No manual upgrade step needed.
+Each cluster service is a oneshot `<name>-setup` unit. When it finishes, it writes the marker `/var/lib/<name>-setup-done` with a hash of its configuration. On the next start, the unit compares the hash and skips the install if nothing changed. Thus `make deploy` re-runs only the services whose chart version, values or ingresses changed. To run a setup again without a change, use `make reinstall SVC=<name>`. It deletes the marker and restarts the unit.
+
+The units start in five tiers, in this order: `k8s-infrastructure`, `k8s-storage`, `k8s-core`, `k8s-apps` and `k8s-extras`. Each tier is a systemd target.
 
 ## Configuration
 
@@ -668,9 +670,25 @@ When consuming `nixos-k8s` as a flake input, you extend the base cluster through
 
 Every module (base and extra) receives `k8s` and `inputs` via `specialArgs`, plus anything you add through `extraSpecialArgs`. The cluster configuration is the `cluster` option: modules read `config.cluster`, the current node as `config.cluster.node`, the bootstrap node as `config.cluster.bootstrapNode`, and the secrets directory as `config.cluster.secretsPath`.
 
+### What you own and what the framework owns
+
+| You own | The framework owns |
+|---------|--------------------|
+| `config.nix`: nodes, domain, network, service toggles | `modules/`: host network, users, security, the Kubernetes engine, the services |
+| `hosts/<node>/`: hardware, disk layout, `system.stateVersion` | `scripts/` and the `Makefile` targets |
+| `secrets/`: the `.age` files and `secrets.nix` | The setup units, their markers and their tiers |
+| Your own modules in `extraModules` | The `cluster.*` and `k8s.*` options |
+
 ### NixOS options exposed by the base
 
-These options let you tweak the base without forking it:
+The options use two namespaces:
+
+- `cluster.*` holds what you write in `config.nix`. `mkCluster` passes `clusterConfig` to it. Modules only read it.
+- `k8s.*` holds what modules set for other modules: releases, users, storage, cleanup and SMART. Set these options in your own modules, not in `config.nix`.
+
+Modules define `k8s.*` inside `lib.mkIf` blocks that read `config.cluster`. A definition of `cluster.*` inside such a block causes infinite recursion.
+
+The `description` of each option in the source documents its fields. The examples below show common uses.
 
 **`k8s.users`** (`modules/core/users.nix`)
 
@@ -703,10 +721,10 @@ k8s.storage.nfs = {
 
 Use this when you want the shared PVC in a specific namespace, with a project-specific folder layout, or to gate on extra NAS mounts.
 
-**`smart.*`** (`modules/core/smart.nix`)
+**`k8s.smart.*`** (`modules/core/smart.nix`)
 
 ```nix
-smart = {
+k8s.smart = {
   enable = true;              # smartd + periodic health/temperature/space checks
   tempThreshold = 55;         # Celsius above which a warning is logged
   usageThreshold = 85;        # filesystem usage percent above which a warning is logged
@@ -721,7 +739,7 @@ smart = {
 
 The exporter skips iSCSI virtual disks (e.g. Longhorn replica attachments), so the metric stream stays clean on cluster nodes that also serve as Longhorn workers. Periodic health/temperature checks apply the same filter. If `exporter.enable = true` without a cluster, set `openFirewall = true` so Prometheus can reach port 9633.
 
-**`monitoring.*`** (`modules/kubernetes/apps/monitoring/`)
+**`monitoring` in `config.nix`** (`modules/kubernetes/apps/monitoring/`)
 
 ```nix
 monitoring = {

@@ -93,7 +93,7 @@ lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.cni == "calico
 
   systemd.services.tigera-operator-setup = {
     # tigera-operator is the CNI installer itself. On first boot the node
-    # is NotReady until Calico is rolled out, so wait_for_k3s must skip the
+    # is NotReady until Calico is rolled out, so wait_for_api must skip the
     # Ready check. Subsequent runs are no-ops thanks to the marker hash.
     environment.SKIP_NODE_READY = "1";
   };

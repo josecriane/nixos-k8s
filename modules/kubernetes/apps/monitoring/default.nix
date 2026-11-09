@@ -222,7 +222,7 @@ let
   preHelmKps = ''
     ${k8s.libShSource}
     set -euo pipefail
-    wait_for_k3s
+    wait_for_api
     ensure_namespace "${ns}" "privileged"
 
     # The Grafana sub-chart reads admin-user/admin-password from existingSecret.
