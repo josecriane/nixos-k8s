@@ -20,7 +20,7 @@ let
   # NAS backups are only filesystem operations (age decrypt/copy). Do this
   # before k3s/helm so it doesn't gate cluster progress, and so the local
   # backup is available when the restore/ACME logic runs post-helm.
-  preHelm = pkgs.writeShellScript "cert-manager-pre-helm" ''
+  prepare = ''
     ${k8s.libShSource}
     set -euo pipefail
 
@@ -65,8 +65,12 @@ let
     fi
   '';
 
-  release = k8s.createHelmRelease {
-    name = "cert-manager";
+  release = {
+    inherit prepare;
+    after = [
+      "k3s.service"
+      "traefik-setup.service"
+    ];
     namespace = "cert-manager";
     tier = "infrastructure";
     repo = {
@@ -76,7 +80,7 @@ let
     chart = "jetstack/cert-manager";
     timeout = "5m";
     valuesFile = ./values.yaml;
-    extraScript = ''
+    postInstall = ''
       wait_for_traefik
 
       echo "Waiting for cert-manager pods to be ready..."
@@ -279,22 +283,10 @@ let
     '';
   };
 in
-lib.mkIf (config.cluster.isBootstrap && config.cluster.certificates.provider == "acme") (
-  lib.recursiveUpdate release {
-    age.secrets.cloudflare-api-token = {
-      file = "${config.cluster.secretsPath}/cloudflare-api-token.age";
-    };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.certificates.provider == "acme") {
+  k8s.helmReleases.cert-manager = release;
 
-    systemd.services.cert-manager-setup = {
-      after = (release.systemd.services.cert-manager-setup.after or [ ]) ++ [
-        "k3s.service"
-        "traefik-setup.service"
-      ];
-      wants = [
-        "k3s.service"
-        "traefik-setup.service"
-      ];
-      serviceConfig.ExecStartPre = "${preHelm}";
-    };
-  }
-)
+  age.secrets.cloudflare-api-token = {
+    file = "${config.cluster.secretsPath}/cloudflare-api-token.age";
+  };
+}

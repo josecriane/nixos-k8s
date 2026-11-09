@@ -219,7 +219,7 @@ let
     ingressToggle "alertmanager" "kube-prometheus-stack-alertmanager" 9093 "alertmanager"
       alertMw;
 
-  preHelmKps = pkgs.writeShellScript "kube-prometheus-stack-pre-helm" ''
+  preHelmKps = ''
     ${k8s.libShSource}
     set -euo pipefail
     wait_for_k3s
@@ -258,8 +258,8 @@ let
     fi
   '';
 
-  kps = k8s.createHelmRelease {
-    name = "kube-prometheus-stack";
+  kps = {
+    prepare = preHelmKps;
     namespace = ns;
     tier = "core";
     timeout = "15m";
@@ -278,20 +278,22 @@ let
     sets = kpsStorageSets;
     # node-exporter DaemonSet uses hostPath/hostNetwork/hostPID.
     pssLevel = "privileged";
-    ingress = {
-      host = "grafana";
-      service = "kube-prometheus-stack-grafana";
-      port = 80;
-    };
+    ingresses = [
+      {
+        host = "grafana";
+        service = "kube-prometheus-stack-grafana";
+        port = 80;
+      }
+    ];
     middlewares = grafanaMw;
-    extraScript = ''
+    postInstall = ''
       ${prePromIngress}
       ${preAlertIngress}
     '';
   };
 
-  loki = k8s.createHelmRelease {
-    name = "loki";
+  loki = {
+    after = [ "kube-prometheus-stack-setup.service" ];
     namespace = ns;
     tier = "core";
     timeout = "5m";
@@ -317,6 +319,7 @@ let
 
   lokiUninstall = uninstallService {
     name = "loki";
+    after = [ "kube-prometheus-stack-setup.service" ];
     extraCleanup = ''
       $KUBECTL -n ${ns} delete pvc storage-loki-0 --ignore-not-found --timeout=30s || true
     '';
@@ -324,48 +327,22 @@ let
 
   promtailUninstall = uninstallService {
     name = "promtail";
+    after = [ "loki-setup.service" ];
   };
-
-  lokiBlock = {
-    systemd.services.loki-setup =
-      (if lokiEnable then loki else lokiUninstall).systemd.services.loki-setup;
-  };
-  promtailBlock = promtailUninstall;
 in
 lib.mkIf (config.cluster.isBootstrap && config.cluster.services.monitoring) (
-  lib.recursiveUpdate
-    (builtins.foldl' lib.recursiveUpdate kps [
-      lokiBlock
-      dashboardsModule
-      smartExporterModule
-      nasSmartExporterModule
-      nasNodeExporterModule
-      nodeExporterRelabelModule
-      alloyModule
-    ])
-    (
-      lib.recursiveUpdate promtailBlock {
-        systemd.services.kube-prometheus-stack-setup = {
-          serviceConfig.ExecStartPre = "${preHelmKps}";
-        };
-        systemd.services.loki-setup = {
-          after = (lokiBlock.systemd.services.loki-setup.after or [ ]) ++ [
-            "kube-prometheus-stack-setup.service"
-          ];
-          wants = [ "kube-prometheus-stack-setup.service" ];
-        };
-        systemd.services.alloy-logs-setup = {
-          after = (alloyModule.systemd.services.alloy-logs-setup.after or [ ]) ++ [
-            "loki-setup.service"
-          ];
-          wants = [ "loki-setup.service" ];
-        };
-        systemd.services.promtail-setup = {
-          after = (promtailBlock.systemd.services.promtail-setup.after or [ ]) ++ [
-            "loki-setup.service"
-          ];
-          wants = [ "loki-setup.service" ];
-        };
-      }
-    )
+  lib.mkMerge [
+    dashboardsModule
+    smartExporterModule
+    nasSmartExporterModule
+    nasNodeExporterModule
+    nodeExporterRelabelModule
+    alloyModule
+    {
+      k8s.helmReleases.kube-prometheus-stack = kps;
+      k8s.helmReleases.loki = lib.mkIf lokiEnable loki;
+      systemd.services.loki-setup = lib.mkIf (!lokiEnable) lokiUninstall.systemd.services.loki-setup;
+      systemd.services.promtail-setup = promtailUninstall.systemd.services.promtail-setup;
+    }
+  ]
 )

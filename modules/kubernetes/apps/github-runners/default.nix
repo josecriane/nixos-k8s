@@ -37,7 +37,6 @@
 #   - With githubApp block: needs secrets/github-app-key.age (private key .pem)
 #   - Without githubApp block: falls back to PAT via secrets/github-pat.age
 {
-  k8s,
   config,
   lib,
   pkgs,
@@ -136,13 +135,12 @@ let
     ]
   );
 
-  controller = k8s.createHelmRelease {
-    name = "arc";
+  controller = {
     namespace = "arc-systems";
     chart = "oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller";
     version = "0.14.2";
     tier = "apps";
-    preScript = ''
+    preInstall = ''
       echo "Applying ARC CRDs..."
       CRD_DIR=$(mktemp -d)
       $HELM pull oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
@@ -152,8 +150,7 @@ let
     '';
   };
 
-  runnerSet = k8s.createHelmRelease {
-    name = "arc-runner-set";
+  runnerSet = {
     namespace = "arc-runners";
     chart = "oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set";
     version = "0.14.2";
@@ -171,7 +168,7 @@ let
       DIND_RESOURCES = builtins.toJSON dindResources;
       APT_MIRROR = aptMirror;
     };
-    extraScript = ''
+    postInstall = ''
       # Create GitHub auth secret (App or PAT)
       echo "Creating GitHub auth secret..."
       ${
@@ -245,5 +242,6 @@ lib.mkIf (config.cluster.isBootstrap && config.cluster.services.github-runners) 
     })
   ];
 
-  systemd.services = controller.systemd.services // runnerSet.systemd.services;
+  k8s.helmReleases.arc = controller;
+  k8s.helmReleases.arc-runner-set = runnerSet;
 })

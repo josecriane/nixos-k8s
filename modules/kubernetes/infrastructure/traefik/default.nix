@@ -1,5 +1,4 @@
 {
-  k8s,
   config,
   lib,
   pkgs,
@@ -41,8 +40,7 @@ let
 
   lbUnits = [ "k3s.service" ] ++ lib.optional useMetalLB "metallb-setup.service";
 
-  release = k8s.createHelmRelease {
-    name = "traefik";
+  release = {
     namespace = "traefik-system";
     tier = "infrastructure";
     repo = {
@@ -59,7 +57,8 @@ let
     // lib.optionalAttrs useMetalLB {
       TRAEFIK_IP = config.cluster.traefikIP;
     };
-    extraScript = ''
+    after = lbUnits;
+    postInstall = ''
       echo "Waiting for Traefik pod to be ready..."
       wait_for_pod traefik-system "app.kubernetes.io/name=traefik"
 
@@ -73,11 +72,6 @@ let
     '';
   };
 in
-lib.mkIf (config.cluster.isBootstrap) (
-  lib.recursiveUpdate release {
-    systemd.services.traefik-setup = {
-      after = (release.systemd.services.traefik-setup.after or [ ]) ++ lbUnits;
-      wants = lbUnits;
-    };
-  }
-)
+lib.mkIf config.cluster.isBootstrap {
+  k8s.helmReleases.traefik = release;
+}

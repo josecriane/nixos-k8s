@@ -7,6 +7,7 @@
 {
   name,
   tier ? "core",
+  after ? [ ],
   extraCleanup ? "",
 }:
 
@@ -53,8 +54,8 @@ in
 {
   systemd.services."${name}-setup" = {
     description = "Reconcile ${name} (disabled in monitoring config)";
-    after = [ engineService ] ++ pkgs.lib.optional (prevTarget != null) prevTarget;
-    wants = [ engineService ];
+    after = [ engineService ] ++ pkgs.lib.optional (prevTarget != null) prevTarget ++ after;
+    wants = [ engineService ] ++ after;
     requires = pkgs.lib.optional (prevTarget != null) prevTarget;
     wantedBy = [ "${targetName}.target" ];
     before = [ "${targetName}.target" ];

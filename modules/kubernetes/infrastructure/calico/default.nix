@@ -1,7 +1,6 @@
 # Calico CNI via Tigera operator
 # Only installed on bootstrap server (operator manages DaemonSets on all nodes)
 {
-  k8s,
   config,
   lib,
   pkgs,
@@ -15,14 +14,18 @@ let
   # Migration: the previous module was named "calico", this one is
   # "tigera-operator". Remove the stale marker so the service lifecycle
   # tracks the new name consistently, and stop the old unit if still loaded.
-  preHelm = pkgs.writeShellScript "tigera-operator-pre-helm" ''
+  prepare = ''
     set -euo pipefail
     rm -f /var/lib/calico-setup-done
     systemctl stop calico-setup.service 2>/dev/null || true
   '';
 
-  release = k8s.createHelmRelease {
-    name = "tigera-operator";
+  release = {
+    inherit prepare;
+    after = [
+      "kube-apiserver.service"
+      "k3s.service"
+    ];
     namespace = "tigera-operator";
     tier = "infrastructure";
     pssLevel = "privileged";
@@ -38,12 +41,12 @@ let
     substitutions = {
       POD_CIDR = podCidr;
     };
-    preScript = ''
+    preInstall = ''
       echo "Applying Calico CRDs (${calicoVersion})..."
       $HELM template calico-crds projectcalico/crd.projectcalico.org.v1 --version ${calicoVersion} \
         | $KUBECTL apply --server-side --force-conflicts -f -
     '';
-    extraScript = ''
+    postInstall = ''
       # Calico needs privileged (hostNetwork, NET_ADMIN, hostPath).
       # tigera-operator ns was labeled via pssLevel; label the operator-managed ones too.
       for ns in calico-system calico-apiserver; do
@@ -85,64 +88,55 @@ let
     '';
   };
 in
-lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.cni == "calico") (
-  lib.recursiveUpdate release {
-    systemd.services.tigera-operator-setup = {
-      after = (release.systemd.services.tigera-operator-setup.after or [ ]) ++ [
-        "kube-apiserver.service"
-        "k3s.service"
-      ];
-      wants = [
-        "kube-apiserver.service"
-        "k3s.service"
-      ];
-      # tigera-operator is the CNI installer itself. On first boot the node
-      # is NotReady until Calico is rolled out, so wait_for_k3s must skip the
-      # Ready check. Subsequent runs are no-ops thanks to the marker hash.
-      environment.SKIP_NODE_READY = "1";
-      serviceConfig.ExecStartPre = "${preHelm}";
-    };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.cni == "calico") {
+  k8s.helmReleases.tigera-operator = release;
 
-    # When certmgr rotates the ServiceAccount signing key
-    # (/var/lib/kubernetes/secrets/service-account.pem), every existing SA
-    # token gets invalidated by signature even if its `exp` is still in the
-    # future. Calico's cni-config-monitor only refreshes its CNI kubeconfig
-    # on a time schedule (~7h between writes), so there's a multi-hour
-    # window after the rotation in which /etc/cni/net.d/calico-kubeconfig on
-    # each node carries an unauthorized token. During that window
-    # `kubectl delete pod` hangs with
-    # `Failed to destroy network for sandbox: ... Unauthorized` until the
-    # next scheduled refresh, which leaves runner pods stuck in Terminating
-    # and ARC unable to scale.
-    #
-    # Watch the signing cert and roll the calico-node DaemonSet the moment
-    # certmgr rewrites it. install-cni in the new pods regenerates the host
-    # kubeconfig with a fresh token signed by the current key.
-    systemd.paths.calico-cni-token-refresh = {
-      description = "Watch SA signing key and refresh Calico CNI tokens";
-      wantedBy = [ "multi-user.target" ];
-      pathConfig = {
-        PathChanged = "/var/lib/kubernetes/secrets/service-account.pem";
-        Unit = "calico-cni-token-refresh.service";
-      };
-    };
+  systemd.services.tigera-operator-setup = {
+    # tigera-operator is the CNI installer itself. On first boot the node
+    # is NotReady until Calico is rolled out, so wait_for_k3s must skip the
+    # Ready check. Subsequent runs are no-ops thanks to the marker hash.
+    environment.SKIP_NODE_READY = "1";
+  };
 
-    systemd.services.calico-cni-token-refresh = {
-      description = "Roll calico-node so CNI kubeconfigs pick up a fresh token";
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = pkgs.writeShellScript "calico-cni-token-refresh" ''
-          set -eu
-          KUBECTL="${pkgs.kubectl}/bin/kubectl --kubeconfig=/etc/kubernetes/cluster-admin.kubeconfig"
-          # certmgr restarts kube-apiserver around the rotation, so wait for
-          # the API to come back before issuing the rollout.
-          for i in $(seq 1 60); do
-            $KUBECTL get ns calico-system &>/dev/null && break
-            sleep 2
-          done
-          $KUBECTL -n calico-system rollout restart daemonset/calico-node
-        '';
-      };
+  # When certmgr rotates the ServiceAccount signing key
+  # (/var/lib/kubernetes/secrets/service-account.pem), every existing SA
+  # token gets invalidated by signature even if its `exp` is still in the
+  # future. Calico's cni-config-monitor only refreshes its CNI kubeconfig
+  # on a time schedule (~7h between writes), so there's a multi-hour
+  # window after the rotation in which /etc/cni/net.d/calico-kubeconfig on
+  # each node carries an unauthorized token. During that window
+  # `kubectl delete pod` hangs with
+  # `Failed to destroy network for sandbox: ... Unauthorized` until the
+  # next scheduled refresh, which leaves runner pods stuck in Terminating
+  # and ARC unable to scale.
+  #
+  # Watch the signing cert and roll the calico-node DaemonSet the moment
+  # certmgr rewrites it. install-cni in the new pods regenerates the host
+  # kubeconfig with a fresh token signed by the current key.
+  systemd.paths.calico-cni-token-refresh = {
+    description = "Watch SA signing key and refresh Calico CNI tokens";
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathChanged = "/var/lib/kubernetes/secrets/service-account.pem";
+      Unit = "calico-cni-token-refresh.service";
     };
-  }
-)
+  };
+
+  systemd.services.calico-cni-token-refresh = {
+    description = "Roll calico-node so CNI kubeconfigs pick up a fresh token";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "calico-cni-token-refresh" ''
+        set -eu
+        KUBECTL="${pkgs.kubectl}/bin/kubectl --kubeconfig=/etc/kubernetes/cluster-admin.kubeconfig"
+        # certmgr restarts kube-apiserver around the rotation, so wait for
+        # the API to come back before issuing the rollout.
+        for i in $(seq 1 60); do
+          $KUBECTL get ns calico-system &>/dev/null && break
+          sleep 2
+        done
+        $KUBECTL -n calico-system rollout restart daemonset/calico-node
+      '';
+    };
+  };
+}

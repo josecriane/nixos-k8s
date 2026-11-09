@@ -1,5 +1,4 @@
 {
-  k8s,
   config,
   lib,
   pkgs,
@@ -7,15 +6,13 @@
 }:
 
 let
-  isBootstrap = config.cluster.isBootstrap;
 
   longhornCfg = config.cluster.storage.longhorn;
   replicaCount = longhornCfg.replicaCount;
   defaultClass = longhornCfg.defaultStorageClass;
   ingressCfg = longhornCfg.ingress;
 
-  release = k8s.createHelmRelease {
-    name = "longhorn";
+  release = {
     namespace = "longhorn-system";
     tier = "storage";
     pssLevel = "privileged";
@@ -30,17 +27,13 @@ let
       DEFAULT_REPLICA_COUNT = toString replicaCount;
       DEFAULT_CLASS = if defaultClass then "true" else "false";
     };
-    ingress =
-      if ingressCfg != null then
-        {
-          host = ingressCfg.host;
-          service = "longhorn-frontend";
-          port = 80;
-        }
-      else
-        null;
+    ingresses = lib.optional (ingressCfg != null) {
+      host = ingressCfg.host;
+      service = "longhorn-frontend";
+      port = 80;
+    };
     middlewares = if ingressCfg != null then ingressCfg.middlewares else [ ];
-    extraScript = ''
+    postInstall = ''
       echo "Waiting for Longhorn manager DaemonSet..."
       wait_for_pod longhorn-system "app=longhorn-manager"
       echo "Replica count: ${toString replicaCount}"
@@ -94,7 +87,6 @@ lib.mkIf (config.cluster.storage.longhorn.enable) (
         "L+ /usr/local/bin/mount.nfs4 - - - - ${pkgs.nfs-utils}/bin/mount.nfs4"
       ];
     }
-    # Helm release installed once from the bootstrap node.
-    (lib.mkIf isBootstrap release)
+    { k8s.helmReleases.longhorn = release; }
   ]
 )

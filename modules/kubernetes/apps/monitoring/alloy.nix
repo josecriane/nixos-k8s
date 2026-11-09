@@ -1,6 +1,5 @@
 {
   config,
-  k8s,
   lib,
   pkgs,
   ...
@@ -40,7 +39,7 @@ let
     builtins.replaceStrings [ "__DROP_STAGE__" ] [ dropStage ] (builtins.readFile ./alloy-logs.alloy)
   );
 
-  preScript = ''
+  preInstall = ''
     $KUBECTL -n ${ns} create configmap ${configMapName} \
       --from-file=config.alloy=${alloyConfig} \
       --dry-run=client -o yaml | $KUBECTL apply -f -
@@ -109,8 +108,7 @@ let
     };
   };
 
-  release = k8s.createHelmRelease {
-    name = "alloy-logs";
+  release = {
     namespace = ns;
     tier = "core";
     repo = {
@@ -119,18 +117,21 @@ let
     };
     chart = "grafana/alloy";
     version = chartVersion;
-    inherit values preScript;
+    inherit values;
+    inherit preInstall;
+    after = [ "loki-setup.service" ];
     pssLevel = "privileged";
   };
 
   uninstall = uninstallService {
     name = "alloy-logs";
+    after = [ "loki-setup.service" ];
     extraCleanup = ''
       $KUBECTL -n ${ns} delete configmap ${configMapName} --ignore-not-found
     '';
   };
 in
 {
-  systemd.services.alloy-logs-setup =
-    (if enable then release else uninstall).systemd.services.alloy-logs-setup;
+  k8s.helmReleases.alloy-logs = lib.mkIf enable release;
+  systemd.services.alloy-logs-setup = lib.mkIf (!enable) uninstall.systemd.services.alloy-logs-setup;
 }

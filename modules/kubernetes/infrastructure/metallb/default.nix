@@ -2,7 +2,6 @@
   k8s,
   config,
   lib,
-  pkgs,
   ...
 }:
 
@@ -12,7 +11,7 @@ let
   # MetalLB v0.14+ requires a memberlist secret for speaker pods. It must
   # exist before helm install, and we must NOT regenerate it on re-runs or
   # active speakers break - check existence first.
-  preHelm = pkgs.writeShellScript "metallb-pre-helm" ''
+  prepare = ''
     ${k8s.libShSource}
     set -euo pipefail
     wait_for_k3s
@@ -33,8 +32,12 @@ let
     fi
   '';
 
-  release = k8s.createHelmRelease {
-    name = "metallb";
+  release = {
+    inherit prepare;
+    after = [
+      "k3s.service"
+      "k3s-cni-bridge-fixer.service"
+    ];
     namespace = "metallb-system";
     tier = "infrastructure";
     pssLevel = "privileged";
@@ -50,25 +53,13 @@ let
       POOL_END = config.cluster.metallbPoolEnd;
       BOOTSTRAP_NODE = bootstrapNode;
     };
-    extraScript = ''
+    postInstall = ''
       echo "Waiting for MetalLB pods to be ready..."
       wait_for_pod metallb-system "app.kubernetes.io/name=metallb"
       echo "IP pool: ${config.cluster.metallbPoolStart}-${config.cluster.metallbPoolEnd}"
     '';
   };
 in
-lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.loadBalancer == "metallb") (
-  lib.recursiveUpdate release {
-    systemd.services.metallb-setup = {
-      after = (release.systemd.services.metallb-setup.after or [ ]) ++ [
-        "k3s.service"
-        "k3s-cni-bridge-fixer.service"
-      ];
-      wants = [
-        "k3s.service"
-        "k3s-cni-bridge-fixer.service"
-      ];
-      serviceConfig.ExecStartPre = "${preHelm}";
-    };
-  }
-)
+lib.mkIf (config.cluster.isBootstrap && config.cluster.kubernetes.loadBalancer == "metallb") {
+  k8s.helmReleases.metallb = release;
+}

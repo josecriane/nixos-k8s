@@ -25,7 +25,6 @@
   k8s,
   config,
   lib,
-  pkgs,
   ...
 }:
 
@@ -34,7 +33,7 @@ let
   # htpasswd secret for Traefik BasicAuth (key must be 'users').
   # Must exist before manifests.yaml applies the Middleware that references it,
   # otherwise push requests 503 during the first bootstrap window.
-  preHelm = pkgs.writeShellScript "docker-registry-pre-helm" ''
+  prepare = ''
     ${k8s.libShSource}
     set -euo pipefail
     wait_for_k3s
@@ -48,8 +47,8 @@ let
       --dry-run=client -o yaml | $KUBECTL apply -f -
   '';
 
-  registry = k8s.createHelmRelease {
-    name = "docker-registry";
+  registry = {
+    inherit prepare;
     namespace = "container-registry";
     repo = {
       name = "docker-registry";
@@ -63,8 +62,7 @@ let
     # TLS handled by the default TLSStore in traefik-system (see tls-secret.nix).
   };
 
-  ui = k8s.createHelmRelease {
-    name = "docker-registry-ui";
+  ui = {
     namespace = "container-registry";
     repo = {
       name = "docker-registry-ui";
@@ -74,11 +72,13 @@ let
     version = "1.1.3";
     tier = "core";
     valuesFile = ./values-ui.yaml;
-    ingress = {
-      host = "registry-ui";
-      service = "docker-registry-ui-docker-registry-ui-user-interface";
-      port = 80;
-    };
+    ingresses = [
+      {
+        host = "registry-ui";
+        service = "docker-registry-ui-docker-registry-ui-user-interface";
+        port = 80;
+      }
+    ];
     middlewares = [
       {
         name = "registry-auth";
@@ -87,16 +87,11 @@ let
     ];
   };
 in
-lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-registry) (
-  lib.recursiveUpdate
-    {
-      age.secrets.registry-htpasswd = {
-        file = "${config.cluster.secretsPath}/registry-htpasswd.age";
-      };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-registry) {
+  age.secrets.registry-htpasswd = {
+    file = "${config.cluster.secretsPath}/registry-htpasswd.age";
+  };
 
-      systemd.services = registry.systemd.services // ui.systemd.services;
-    }
-    {
-      systemd.services.docker-registry-setup.serviceConfig.ExecStartPre = "${preHelm}";
-    }
-)
+  k8s.helmReleases.docker-registry = registry;
+  k8s.helmReleases.docker-registry-ui = ui;
+}

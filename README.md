@@ -128,7 +128,7 @@ make fmt                           Format .nix files
 make clean                         Remove build artifacts
 ```
 
-Services deployed with `createHelmRelease` detect config changes automatically. When you change a chart version, values, or ingress in a `.nix` file, `make deploy` will re-run only the affected services. No manual upgrade step needed.
+Releases declared in `k8s.helmReleases` detect config changes automatically. When you change a chart version, values, or an ingress in a `.nix` file, `make deploy` will re-run only the affected services. No manual upgrade step needed.
 
 ## Configuration
 
@@ -366,7 +366,8 @@ nixos-k8s/
       smart.nix                      SMART monitoring (smartd + exporter + periodic checks)
     services/                        System services (add as needed)
     kubernetes/
-      lib.nix                        Nix helpers + createHelmRelease
+      lib.nix                        Nix helpers
+      helm-releases.nix              k8s.helmReleases option: one setup unit per Helm release
       lib.sh                         Bash helpers
       systemd-targets.nix            Boot tier ordering
       default.nix                    Kubernetes module orchestrator
@@ -595,36 +596,41 @@ The raw manifests (`smart-exporter`, `nas-smart-exporter`, `nas-node-exporter`) 
 
 ## Adding a service
 
-Use `createHelmRelease` to add a new Helm chart. One function call generates the complete systemd service with marker file, helm install, ingress, and TLS.
+Declare a Helm chart under `k8s.helmReleases.<name>`. The option generates the `<name>-setup` systemd service with the marker file, the helm install, the ingresses and TLS.
 
 1. Create a module in `modules/kubernetes/apps/`:
 
    ```nix
    # modules/kubernetes/apps/my-service.nix
-   { k8s, config, lib, ... }:
-   lib.mkIf (config.cluster.isBootstrap && config.cluster.services.my-service) (k8s.createHelmRelease {
-     name = "my-service";
-     namespace = "my-service";
-     repo = { name = "my-repo"; url = "https://charts.example.com"; };
-     chart = "my-repo/my-service";
-     version = "1.0.0";
-     tier = "core";           # systemd tier: infrastructure, storage, core, apps, extras
-     values = {               # Nix attrset, converted to YAML automatically
-       replicaCount = 2;
-       persistence.enabled = true;
+   { config, lib, ... }:
+   lib.mkIf config.cluster.services.my-service {
+     k8s.helmReleases.my-service = {
+       namespace = "my-service";
+       repo = { name = "my-repo"; url = "https://charts.example.com"; };
+       chart = "my-repo/my-service";
+       version = "1.0.0";
+       tier = "core";              # systemd tier: infrastructure, storage, core, apps, extras
+       values = {                  # Nix attrset, converted to YAML automatically
+         replicaCount = 2;
+         persistence.enabled = true;
+       };
+       ingresses = [ {             # optional: Traefik IngressRoutes with TLS
+         host = "my-service";      # -> my-service.<subdomain>.<domain>
+         service = "my-service";
+         port = 8080;
+       } ];
+       waitFor = "my-service";     # optional: wait for the deployment to be ready
+       after = [ ];                # optional: units to want and run after
+       prepare = "";               # optional: ExecStartPre script, runs on every start
+       runtime = "";               # optional: bash before the marker check, to resolve deploy-time values
+       runtimeSets = [ ];          # optional: "key=$VAR" strings appended as --set
+       preInstall = "";            # optional: bash before helm install
+       postInstall = "";           # optional: bash after helm install
      };
-     ingress = {              # optional: creates Traefik IngressRoute with TLS
-       host = "my-service";   # -> my-service.<subdomain>.<domain>
-       service = "my-service";
-       port = 8080;
-     };
-     waitFor = "my-service";  # optional: wait for deployment to be ready
-     preScript = "";          # optional: extra bash before helm install
-     extraScript = "";        # optional: extra bash after helm install
-     runtimeScript = "";      # optional: bash run first, to resolve deploy-time values
-     runtimeSets = [ ];       # optional: "key=$VAR" strings appended as --set
-   })
+   }
    ```
+
+   The release runs only on the bootstrap node unless `bootstrapOnly = false`. `modules/kubernetes/helm-releases.nix` documents every field.
 
 2. Add the module to the `imports` list in `modules/kubernetes/apps/default.nix`. Declare the toggle under `services` in `modules/options.nix` and add it to `config.example.nix`. Every module is imported on every node, and its `lib.mkIf` decides whether it is active.
 
@@ -725,16 +731,14 @@ Grafana is exposed at `grafana.<sub>.<domain>`. Prometheus and Alertmanager ingr
 **`k8s.cleanup.serviceMap`** (`modules/kubernetes/infrastructure/cleanup.nix`)
 
 ```nix
-k8s.cleanup.serviceMap.my-service = {
-  namespaces = [ "my-service" ];          # informational
-  markers = [ "my-service-setup-done" ];  # basenames under /var/lib removed on disable
-  extraCleanup = ''
-    $KUBECTL delete middleware -n traefik-system my-service-auth --ignore-not-found
-  '';
-};
+k8s.cleanup.serviceMap.my-service.extraCleanup = ''
+  $KUBECTL delete middleware -n traefik-system my-service-auth --ignore-not-found
+'';
 ```
 
-When `config.cluster.services.my-service = false`, the `k8s-cleanup` service removes the marker files and runs `extraCleanup`. K8s resources themselves are scaled down (not deleted) to preserve PVCs.
+On the bootstrap node, the `k8s-cleanup` service removes every `/var/lib/<unit>-done` marker whose `<unit>` (a `*-setup` service) no longer exists in the configuration. A disabled service therefore runs its full setup again when it is enabled. For each service in `serviceMap` whose `config.cluster.services.<name>` is false, `k8s-cleanup` also runs `extraCleanup`. K8s resources themselves are scaled down (not deleted) to preserve PVCs.
+
+A marker of a setup unit must be `/var/lib/<unit>-done`, for example `/var/lib/my-service-setup-done` for `my-service-setup.service`.
 
 ### Example: minimal consumer flake
 

@@ -24,7 +24,6 @@
   k8s,
   config,
   lib,
-  pkgs,
   ...
 }:
 
@@ -44,7 +43,7 @@ let
 
   # Middleware + htpasswd Secret must exist BEFORE the IngressRoute that
   # references them, otherwise Traefik reports the route as invalid.
-  preHelm = pkgs.writeShellScript "docker-mirror-pre-helm" ''
+  prepare = ''
     ${k8s.libShSource}
     set -euo pipefail
     wait_for_k3s
@@ -104,8 +103,8 @@ let
     $KUBECTL -n container-mirror rollout status deploy docker-mirror-docker-registry --timeout=180s
   '';
 
-  release = k8s.createHelmRelease {
-    name = "docker-mirror";
+  release = {
+    inherit prepare;
     namespace = "container-mirror";
     repo = {
       name = "docker-registry";
@@ -118,33 +117,29 @@ let
     values =
       lib.optionalAttrs (clusterIP != null) { service.clusterIP = clusterIP; }
       // lib.optionalAttrs (storageSize != null) { persistence.size = storageSize; };
-    ingress = {
-      host = "mirror";
-      service = "docker-mirror-docker-registry";
-      port = 5000;
-    };
+    ingresses = [
+      {
+        host = "mirror";
+        service = "docker-mirror-docker-registry";
+        port = 5000;
+      }
+    ];
     middlewares = [
       {
         name = "registry-auth";
         namespace = "container-mirror";
       }
     ];
-    extraScript = injectProxyCreds;
+    postInstall = injectProxyCreds;
   };
 in
-lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-mirror) (
-  lib.recursiveUpdate
-    {
-      age.secrets.docker-mirror-proxy = {
-        file = "${config.cluster.secretsPath}/docker-mirror-proxy.age";
-      };
-      age.secrets.registry-htpasswd = {
-        file = "${config.cluster.secretsPath}/registry-htpasswd.age";
-      };
+lib.mkIf (config.cluster.isBootstrap && config.cluster.services.docker-mirror) {
+  age.secrets.docker-mirror-proxy = {
+    file = "${config.cluster.secretsPath}/docker-mirror-proxy.age";
+  };
+  age.secrets.registry-htpasswd = {
+    file = "${config.cluster.secretsPath}/registry-htpasswd.age";
+  };
 
-      systemd.services = release.systemd.services;
-    }
-    {
-      systemd.services.docker-mirror-setup.serviceConfig.ExecStartPre = "${preHelm}";
-    }
-)
+  k8s.helmReleases.docker-mirror = release;
+}
