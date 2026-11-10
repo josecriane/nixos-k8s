@@ -4,6 +4,7 @@ defaultSettings:
   replicaAutoBalance: best-effort
   storageMinimalAvailablePercentage: "10"
   upgradeChecker: false
+  concurrentAutomaticEngineUpgradePerNodeLimit: 1
 
 persistence:
   defaultClass: __DEFAULT_CLASS__
